@@ -141,7 +141,7 @@ public class TransactionsMsgHandler implements TronMsgHandler {
     }
 
     try {
-      trx.getTransactionCapsule().checkExpiration(chainBaseManager.getNextBlockSlotTime());
+      //trx.getTransactionCapsule().checkExpiration(chainBaseManager.getNextBlockSlotTime());
       tronNetDelegate.pushTransaction(trx.getTransactionCapsule());
       advService.broadcast(trx);
     } catch (P2pException e) {
@@ -151,9 +151,9 @@ public class TransactionsMsgHandler implements TronMsgHandler {
         peer.setBadPeer(true);
         peer.disconnect(ReasonCode.BAD_TX);
       }
-    } catch (TransactionExpirationException e) {
-      logger.warn("{}. trx: {}, peer: {}",
-          e.getMessage(), trx.getMessageId(), peer.getInetAddress());
+    // } catch (TransactionExpirationException e) {
+    //   logger.warn("{}. trx: {}, peer: {}",
+    //       e.getMessage(), trx.getMessageId(), peer.getInetAddress());
     } catch (Exception e) {
       logger.error("Trx {} from peer {} process failed", trx.getMessageId(), peer.getInetAddress(),
           e);
