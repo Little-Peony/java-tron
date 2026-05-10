@@ -7,6 +7,7 @@ import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.tron.common.crypto.SignInterface;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.LocalWitnesses;
@@ -14,6 +15,7 @@ import org.tron.core.exception.CipherException;
 import org.tron.core.exception.TronError;
 import org.tron.keystore.Credentials;
 import org.tron.keystore.WalletUtils;
+import org.tron.protos.Protocol.PQScheme;
 
 @Slf4j
 public class WitnessInitializer {
@@ -113,42 +115,39 @@ public class WitnessInitializer {
   }
 
   /**
-   * Init for PQ-only witness nodes (no legacy ECDSA key). The witness account
-   * address must be supplied explicitly because there is no ECDSA key to derive it from.
+   * Init for PQ-only witness nodes (no legacy ECDSA key). When
+   * {@code witnessAccountAddress} is blank, the address is derived from the
+   * first PQ public key via {@link PQSchemeRegistry#computeAddress(PQScheme,
+   * byte[])}.
    */
-  public static LocalWitnesses initFromPQOnly(String witnessAccountAddress) {
-    if (StringUtils.isBlank(witnessAccountAddress)) {
+  public static LocalWitnesses initFromPQOnly(PQScheme scheme,
+      List<String> pqPrivateKeys, List<String> pqPublicKeys,
+      String witnessAccountAddress) {
+    if (pqPublicKeys == null || pqPublicKeys.isEmpty()) {
       throw new TronError(
-          "localWitnessAccountAddress must be set for PQ-only witness nodes",
-          TronError.ErrCode.WITNESS_INIT);
-    }
-    byte[] address = Commons.decodeFromBase58Check(witnessAccountAddress);
-    if (address == null) {
-      throw new TronError(
-          "LocalWitnessAccountAddress format is incorrect",
+          "PQ public keys must be set for PQ-only witness nodes",
           TronError.ErrCode.WITNESS_INIT);
     }
     LocalWitnesses witnesses = new LocalWitnesses();
-    witnesses.initWitnessAccountAddress(address, false);
-    logger.debug("Initialised PQ-only witness with address {}", witnessAccountAddress);
-    return witnesses;
-  }
+    witnesses.setPqScheme(scheme);
+    witnesses.setPqKeypairs(pqPrivateKeys, pqPublicKeys);
 
-  /**
-   * Resolve witness address for PQ seed configuration.
-   */
-  public static byte[] resolvePqAuthSigAddress(String witnessAccountAddress) {
-    if (StringUtils.isEmpty(witnessAccountAddress)) {
-      return null;
-    }
-    byte[] address = Commons.decodeFromBase58Check(witnessAccountAddress);
-    if (address != null) {
-      logger.debug("Got localWitnessAccountAddress from config.conf");
+    byte[] address;
+    if (StringUtils.isBlank(witnessAccountAddress)) {
+      byte[] firstPubKey = ByteArray.fromHexString(pqPublicKeys.get(0));
+      address = PQSchemeRegistry.computeAddress(scheme, firstPubKey);
+      logger.debug("Derived PQ-only witness address from public key");
     } else {
-      throw new TronError("LocalWitnessAccountAddress format from config is incorrect",
-          TronError.ErrCode.WITNESS_INIT);
+      address = Commons.decodeFromBase58Check(witnessAccountAddress);
+      if (address == null) {
+        throw new TronError(
+            "LocalWitnessAccountAddress format is incorrect",
+            TronError.ErrCode.WITNESS_INIT);
+      }
+      logger.debug("Got localWitnessAccountAddress from config.conf");
     }
-    return address;
+    witnesses.initWitnessAccountAddress(address, false);
+    return witnesses;
   }
 
   static byte[] resolveWitnessAddress(

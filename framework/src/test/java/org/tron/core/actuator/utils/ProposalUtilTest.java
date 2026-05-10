@@ -801,26 +801,62 @@ public class ProposalUtilTest extends BaseTest {
   @Test
   public void validateAllowFnDsa512() {
     long code = ProposalType.ALLOW_FN_DSA_512.getCode();
+    ThrowingRunnable proposeZero = () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+        code, 0);
+    ThrowingRunnable proposeOne = () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+        code, 1);
+    ThrowingRunnable proposeTwo = () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+        code, 2);
 
-    ContractValidateException thrown = assertThrows(ContractValidateException.class,
-        () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils, code, 0));
-    assertEquals("This value[ALLOW_FN_DSA_512] is only allowed to be 1", thrown.getMessage());
+    byte[] stats = new byte[27];
+    forkUtils.getManager().getDynamicPropertiesStore()
+        .statsByVersion(ForkBlockVersionEnum.VERSION_4_8_1.getValue(), stats);
+    long maintenanceTimeInterval = forkUtils.getManager().getDynamicPropertiesStore()
+        .getMaintenanceTimeInterval();
+    long hardForkTime =
+        ((ForkBlockVersionEnum.VERSION_4_8_2.getHardForkTime() - 1) / maintenanceTimeInterval + 1)
+            * maintenanceTimeInterval;
+    forkUtils.getManager().getDynamicPropertiesStore()
+        .saveLatestBlockHeaderTimestamp(hardForkTime - 1);
 
-    thrown = assertThrows(ContractValidateException.class,
-        () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils, code, 2));
-    assertEquals("This value[ALLOW_FN_DSA_512] is only allowed to be 1", thrown.getMessage());
+    // 1) before fork 4.8.2 -> rejected
+    ContractValidateException thrown = assertThrows(ContractValidateException.class, proposeOne);
+    assertEquals("Bad chain parameter id [ALLOW_FN_DSA_512]", thrown.getMessage());
 
+    forkUtils.getManager().getDynamicPropertiesStore()
+        .saveLatestBlockHeaderTimestamp(hardForkTime + 1);
+    Arrays.fill(stats, (byte) 1);
+    forkUtils.getManager().getDynamicPropertiesStore()
+        .statsByVersion(ForkBlockVersionEnum.VERSION_4_8_2.getValue(), stats);
+
+    // 2) value not in {0, 1} -> rejected
+    thrown = assertThrows(ContractValidateException.class, proposeTwo);
+    assertEquals("This value[ALLOW_FN_DSA_512] is only allowed to be 0 or 1", thrown.getMessage());
+
+    // 3) current value is 0 (default), proposing 0 again -> rejected
+    thrown = assertThrows(ContractValidateException.class, proposeZero);
+    assertEquals("[ALLOW_FN_DSA_512] has been set to 0, no need to propose again",
+        thrown.getMessage());
+
+    // 4) value=1 to enable -> ok
     try {
-      ProposalUtil.validator(dynamicPropertiesStore, forkUtils, code, 1);
-    } catch (ContractValidateException e) {
-      Assert.fail("value=1 should be accepted: " + e.getMessage());
+      proposeOne.run();
+    } catch (Throwable e) {
+      Assert.fail("Should pass when toggling 0 -> 1: " + e.getMessage());
     }
 
+    // 5) after activation, proposing 1 again -> rejected
     dynamicPropertiesStore.saveAllowFnDsa512(1L);
-    thrown = assertThrows(ContractValidateException.class,
-        () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils, code, 1));
-    assertEquals("[ALLOW_FN_DSA_512] has been valid, no need to propose again",
+    thrown = assertThrows(ContractValidateException.class, proposeOne);
+    assertEquals("[ALLOW_FN_DSA_512] has been set to 1, no need to propose again",
         thrown.getMessage());
+
+    // 6) value=0 to disable -> ok (toggle back off)
+    try {
+      proposeZero.run();
+    } catch (Throwable e) {
+      Assert.fail("Should pass when toggling 1 -> 0: " + e.getMessage());
+    }
     dynamicPropertiesStore.saveAllowFnDsa512(0L);
   }
 }
