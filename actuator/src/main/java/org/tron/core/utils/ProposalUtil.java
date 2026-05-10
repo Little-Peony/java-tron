@@ -941,6 +941,17 @@ public class ProposalUtil {
         }
         break;
       }
+      case ALLOW_FN_DSA_512: {
+        if (dynamicPropertiesStore.getAllowFnDsa512() == 1) {
+          throw new ContractValidateException(
+              "[ALLOW_FN_DSA_512] has been valid, no need to propose again");
+        }
+        if (value != 1) {
+          throw new ContractValidateException(
+              "This value[ALLOW_FN_DSA_512] is only allowed to be 1");
+        }
+        break;
+      }
       default:
         break;
     }
@@ -1029,7 +1040,9 @@ public class ProposalUtil {
     ALLOW_TVM_PRAGUE(95), // 0, 1
     ALLOW_TVM_OSAKA(96), // 0, 1
     ALLOW_HARDEN_RESOURCE_CALCULATION(97), // 0, 1
-    ALLOW_HARDEN_EXCHANGE_CALCULATION(98); // 0, 1
+    ALLOW_HARDEN_EXCHANGE_CALCULATION(98), // 0, 1
+    ALLOW_FN_DSA_512(100); // 0, 1
+
     private long code;
 
     ProposalType(long code) {

@@ -55,6 +55,7 @@ import org.tron.api.GrpcAPI.TransactionInfoList;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.cron.CronExpression;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.exit.ExitManager;
 import org.tron.common.logsfilter.EventPluginLoader;
@@ -171,6 +172,8 @@ import org.tron.core.store.WitnessStore;
 import org.tron.core.utils.TransactionRegister;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
+import org.tron.protos.Protocol.PQAuthSig;
+import org.tron.protos.Protocol.PQScheme;
 import org.tron.protos.Protocol.Permission;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract;
@@ -1740,7 +1743,7 @@ public class Manager {
     session.reset();
 
     blockCapsule.setMerkleRoot();
-    blockCapsule.sign(miner.getPrivateKey());
+    signBlockCapsule(blockCapsule, miner);
 
     BlockCapsule capsule = new BlockCapsule(blockCapsule.getInstance());
     capsule.generatedByMyself = true;
@@ -1754,6 +1757,60 @@ public class Manager {
         capsule.getSerializedSize());
 
     return capsule;
+  }
+
+  private void signBlockCapsule(BlockCapsule blockCapsule, Miner miner) {
+    PQScheme scheme = resolveWitnessScheme(miner);
+    if (scheme != null && PQSchemeRegistry.contains(scheme)) {
+      signWitnessAuth(blockCapsule, miner, scheme);
+    } else {
+      blockCapsule.sign(miner.getPrivateKey());
+    }
+  }
+
+  private PQScheme resolveWitnessScheme(Miner miner) {
+    if (!chainBaseManager.getDynamicPropertiesStore().isAnyPqSchemeAllowed()) {
+      return null;
+    }
+    PQScheme scheme = miner.getPqScheme();
+    if (scheme == null || !PQSchemeRegistry.contains(scheme)) {
+      return null;
+    }
+    if (!chainBaseManager.getDynamicPropertiesStore().isPqSchemeAllowed(scheme)) {
+      return null;
+    }
+    byte[] witnessAddress = miner.getWitnessAddress().toByteArray();
+    AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(witnessAddress);
+    if (accountCapsule == null || !accountCapsule.getInstance().hasWitnessPermission()) {
+      return null;
+    }
+    Permission witnessPermission = accountCapsule.getInstance().getWitnessPermission();
+    if (witnessPermission.getKeysCount() == 0) {
+      return null;
+    }
+    return scheme;
+  }
+
+  private void signWitnessAuth(BlockCapsule blockCapsule, Miner miner, PQScheme scheme) {
+    byte[] pqPrivateKey = miner.getPQPrivateKey();
+    byte[] pqPublicKey = miner.getPQPublicKey();
+    if (pqPrivateKey == null || pqPublicKey == null) {
+      throw new IllegalStateException(
+          "witness permission requires " + scheme
+              + " but local PQ key material is not configured");
+    }
+    byte[] digest = blockCapsule.getRawHashBytes();
+    byte[] signature = PQSchemeRegistry.sign(scheme, pqPrivateKey, digest);
+    PQAuthSig.Builder builder = PQAuthSig.newBuilder()
+        .setPublicKey(ByteString.copyFrom(pqPublicKey))
+        .setSignature(ByteString.copyFrom(signature));
+    // FN_DSA_512 is the launch scheme: leave scheme at the proto3 default
+    // (UNKNOWN_PQ_SCHEME) and rely on PQSchemeRegistry.resolve() on the read
+    // path so the tag costs zero wire bytes per block.
+    if (scheme != PQScheme.FN_DSA_512) {
+      builder.setScheme(scheme);
+    }
+    blockCapsule.setPqAuthSig(builder.build());
   }
 
   private void filterOwnerAddress(TransactionCapsule transactionCapsule, Set<String> result) {

@@ -671,6 +671,11 @@ public class CommonParameter {
   @Setter
   public long allowTvmBlob;
 
+  @Getter
+  @Setter
+  public long allowFnDsa512;
+
+
   private static double calcMaxTimeRatio() {
     return 5.0;
   }

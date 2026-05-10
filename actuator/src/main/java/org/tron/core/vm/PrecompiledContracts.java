@@ -53,6 +53,8 @@ import org.tron.common.crypto.Hash;
 import org.tron.common.crypto.Rsv;
 import org.tron.common.crypto.SignUtils;
 import org.tron.common.crypto.SignatureInterface;
+import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.crypto.zksnark.BN128;
 import org.tron.common.crypto.zksnark.BN128Fp;
 import org.tron.common.crypto.zksnark.BN128G1;
@@ -83,6 +85,7 @@ import org.tron.core.vm.utils.FreezeV2Util;
 import org.tron.core.vm.utils.MUtil;
 import org.tron.core.vm.utils.VoteRewardUtil;
 import org.tron.protos.Protocol;
+import org.tron.protos.Protocol.PQScheme;
 import org.tron.protos.Protocol.Permission;
 
 @Slf4j(topic = "VM")
@@ -116,6 +119,11 @@ public class PrecompiledContracts {
   private static final EthRipemd160 ethRipemd160 = new EthRipemd160();
   private static final Blake2F blake2F = new Blake2F();
   private static final P256Verify p256Verify = new P256Verify();
+
+  private static final VerifyFnDsa verifyFnDsa = new VerifyFnDsa();
+  private static final ValidateMultiSignPQ validateMultiSignPQ =
+      new ValidateMultiSignPQ();
+  private static final BatchValidateSignPQ batchValidateSignPQ = new BatchValidateSignPQ();
 
   // FreezeV2 PrecompileContracts
   private static final GetChainParameter getChainParameter = new GetChainParameter();
@@ -212,6 +220,24 @@ public class PrecompiledContracts {
   private static final DataWord p256VerifyAddr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000100");
 
+  // EIP-8052 0x16: FN-DSA / Falcon-512 verify (FIPS-206 draft). Input layout:
+  // [msg 32B | sig_len 2B (big-endian) | sig sig_len B (1..752) | pk 896B].
+  // Variable-length signature is prefixed with a 2-byte length field.
+  private static final DataWord verifyFnDsaAddr = new DataWord(
+      "0000000000000000000000000000000000000000000000000000000000000016");
+
+  // 0x17: algorithm-agnostic Permission multi-sign — accepts both ECDSA and
+  // Falcon-512 signatures against the same Permission.keys[] in one call,
+  // matching transaction-side §2.3.5 mixed-weight semantics.
+  private static final DataWord validateMultiSignPQAddr = new DataWord(
+      "0000000000000000000000000000000000000000000000000000000000000017");
+
+  // 0x18: batch independent Falcon-512 verify — bitmap of (sig, pk, addr)
+  // matches; mixed-algorithm contracts call 0x0A and 0x18 separately and OR
+  // the bitmaps client-side.
+  private static final DataWord batchValidateSignPqAddr = new DataWord(
+      "0000000000000000000000000000000000000000000000000000000000000018");
+
   public static PrecompiledContract getOptimizedContractForConstant(PrecompiledContract contract) {
     try {
       Constructor<?> constructor = contract.getClass().getDeclaredConstructor();
@@ -295,6 +321,18 @@ public class PrecompiledContracts {
     }
     if (VMConfig.allowTvmOsaka() && address.equals(p256VerifyAddr)) {
       return p256Verify;
+    }
+
+    if (VMConfig.allowFnDsa512() && address.equals(verifyFnDsaAddr)) {
+      return verifyFnDsa;
+    }
+
+    if (VMConfig.allowFnDsa512() && address.equals(validateMultiSignPQAddr)) {
+      return validateMultiSignPQ;
+    }
+
+    if (VMConfig.allowFnDsa512() && address.equals(batchValidateSignPqAddr)) {
+      return batchValidateSignPQ;
     }
 
     if (VMConfig.allowTvmFreezeV2()) {
@@ -2377,6 +2415,366 @@ public class PrecompiledContracts {
         // EIP-7951 mandates the precompile never reverts; map any failure to (true, empty).
         return Pair.of(true, EMPTY_BYTE_ARRAY);
       }
+    }
+  }
+
+  /**
+   * Verifies a FN-DSA / Falcon-512 signature (FIPS-206 draft). EIP-8052 / TRON extension.
+   *
+   * <p>Input layout (variable-length, EIP-8052-inspired):
+   * <pre>
+   *   [msg 32B | sig_len 2B (big-endian, 1..752) | sig sig_len B | pk 896B]
+   * </pre>
+   * Minimum input: 32 + 2 + 1 + 896 = 931 bytes.
+   *
+   * <p>Returns a 32-byte word: 1 on valid signature, 0 otherwise.
+   * Malformed input (wrong lengths, out-of-range sig_len) returns 0 without error.
+   */
+  public static class VerifyFnDsa extends PrecompiledContract {
+
+    private static final int MSG_LEN = 32;
+    private static final int SIG_LEN_FIELD = 2;
+    private static final int PK_LEN = FNDSA.PUBLIC_KEY_LENGTH;
+    private static final int MAX_SIG_LEN = FNDSA.SIGNATURE_LENGTH;
+    private static final int MIN_INPUT_LEN = MSG_LEN + SIG_LEN_FIELD + 1 + PK_LEN;
+
+    @Override
+    public long getEnergyForData(byte[] data) {
+      return 2500;
+    }
+
+    @Override
+    public Pair<Boolean, byte[]> execute(byte[] data) {
+      if (data == null || data.length < MIN_INPUT_LEN) {
+        return Pair.of(true, DataWord.ZERO().getData());
+      }
+      try {
+        byte[] msg = copyOfRange(data, 0, MSG_LEN);
+        int sigLen = ((data[MSG_LEN] & 0xFF) << 8) | (data[MSG_LEN + 1] & 0xFF);
+        if (sigLen < 1 || sigLen > MAX_SIG_LEN) {
+          return Pair.of(true, DataWord.ZERO().getData());
+        }
+        int pkOffset = MSG_LEN + SIG_LEN_FIELD + sigLen;
+        if (data.length < pkOffset + PK_LEN) {
+          return Pair.of(true, DataWord.ZERO().getData());
+        }
+        byte[] sig = copyOfRange(data, MSG_LEN + SIG_LEN_FIELD, pkOffset);
+        byte[] pk = copyOfRange(data, pkOffset, pkOffset + PK_LEN);
+        boolean ok = FNDSA.verify(pk, msg, sig);
+        return Pair.of(true, ok ? DataWord.ONE().getData() : DataWord.ZERO().getData());
+      } catch (Throwable t) {
+        return Pair.of(true, DataWord.ZERO().getData());
+      }
+    }
+  }
+
+
+  /**
+   * 0x17 ValidateMultiSign — algorithm-agnostic Permission multi-sign.
+   * <p>Mirrors 0x09 hash construction ({@code SHA-256(address ‖ permissionId(int4B) ‖ data)})
+   * and threshold/dedup semantics, while accepting Falcon-512 entries alongside ECDSA
+   * against the same {@code Permission.keys[]}. The {@code data} field stays {@code bytes32}
+   * so the hash is bit-identical to 0x09.
+   *
+   * <p>ABI:
+   * <pre>
+   *   validateMultiSign(
+   *       address account,           // word[0]
+   *       uint256 permissionId,      // word[1]
+   *       bytes32 data,              // word[2]
+   *       bytes[] ecdsaSignatures,   // word[3] = offset; each entry 65 B
+   *       bytes[] pqSignatures,      // word[4] = offset; each entry 1..752 B
+   *       bytes[] pqPublicKeys       // word[5] = offset; each entry 896 B
+   *   ) returns (bool)
+   * </pre>
+   *
+   * <p>{@code MAX_SIZE = 5} applies to the total signature count
+   * ({@code ecdsaCnt + pqCnt}). Energy is split: {@code ecdsaCnt × 1500 + pqCnt × 15000}.
+   */
+  public static class ValidateMultiSignPQ extends PrecompiledContract {
+
+    private static final int ECDSA_ENERGY_PER_SIGN = 1500;
+    private static final int PQ_ENERGY_PER_SIGN = 15000;
+    private static final int MAX_SIZE = 5;
+    private static final int PK_LEN = FNDSA.PUBLIC_KEY_LENGTH;
+    private static final int MAX_SIG_LEN = FNDSA.SIGNATURE_LENGTH;
+
+    @Override
+    public long getEnergyForData(byte[] data) {
+      try {
+        DataWord[] words = DataWord.parseArray(data);
+        int ecdsaCnt = words[words[3].intValueSafe() / WORD_SIZE].intValueSafe();
+        int pqCnt = words[words[4].intValueSafe() / WORD_SIZE].intValueSafe();
+        return (long) ecdsaCnt * ECDSA_ENERGY_PER_SIGN
+            + (long) pqCnt * PQ_ENERGY_PER_SIGN;
+      } catch (Throwable t) {
+        return (long) MAX_SIZE * PQ_ENERGY_PER_SIGN;
+      }
+    }
+
+    @Override
+    public Pair<Boolean, byte[]> execute(byte[] rawData) {
+      try {
+        DataWord[] words = DataWord.parseArray(rawData);
+        byte[] address = words[0].toTronAddress();
+        int permissionId = words[1].intValueSafe();
+        byte[] data = words[2].getData();
+
+        byte[] combine = ByteUtil.merge(address, ByteArray.fromInt(permissionId), data);
+        byte[] hash = Sha256Hash.hash(CommonParameter
+            .getInstance().isECKeyCryptoEngine(), combine);
+
+        int ecdsaArrayWord = words[3].intValueSafe() / WORD_SIZE;
+        int pqSigArrayWord = words[4].intValueSafe() / WORD_SIZE;
+        int pqPkArrayWord = words[5].intValueSafe() / WORD_SIZE;
+
+        int ecdsaCnt = words[ecdsaArrayWord].intValueSafe();
+        int pqSigCnt = words[pqSigArrayWord].intValueSafe();
+        int pqPkCnt = words[pqPkArrayWord].intValueSafe();
+
+        if (pqSigCnt != pqPkCnt
+            || ecdsaCnt + pqSigCnt == 0
+            || ecdsaCnt + pqSigCnt > MAX_SIZE) {
+          return Pair.of(true, DATA_FALSE);
+        }
+
+        byte[][] ecdsaSigs = extractSigArray(words, ecdsaArrayWord, rawData);
+        byte[][] pqSigs = extractBytesArray(words, pqSigArrayWord, rawData);
+        byte[][] pqPks = extractBytesArray(words, pqPkArrayWord, rawData);
+
+        AccountCapsule account = this.getDeposit().getAccount(address);
+        if (account == null) {
+          return Pair.of(true, DATA_FALSE);
+        }
+        Permission permission = account.getPermissionById(permissionId);
+        if (permission == null) {
+          return Pair.of(true, DATA_FALSE);
+        }
+
+        long totalWeight = 0L;
+        List<byte[]> executedSignList = new ArrayList<>();
+
+        for (byte[] sign : ecdsaSigs) {
+          byte[] recoveredAddr = recoverAddrBySign(sign, hash);
+          byte[] dedupKey = merge(recoveredAddr, sign);
+          if (ByteArray.matrixContains(executedSignList, recoveredAddr)) {
+            if (ByteArray.matrixContains(executedSignList, dedupKey)) {
+              continue;
+            }
+            MUtil.checkCPUTime();
+          }
+          long weight = TransactionCapsule.getWeight(permission, recoveredAddr);
+          if (weight == 0) {
+            return Pair.of(true, DATA_FALSE);
+          }
+          totalWeight += weight;
+          executedSignList.add(dedupKey);
+          executedSignList.add(recoveredAddr);
+        }
+
+        for (int i = 0; i < pqSigs.length; i++) {
+          byte[] sig = pqSigs[i];
+          byte[] pk = pqPks[i];
+          if (pk == null || pk.length != PK_LEN
+              || sig == null || sig.length < 1 || sig.length > MAX_SIG_LEN) {
+            return Pair.of(true, DATA_FALSE);
+          }
+          byte[] derivedAddr;
+          try {
+            derivedAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pk);
+          } catch (Throwable t) {
+            return Pair.of(true, DATA_FALSE);
+          }
+          // Falcon-512 signing is randomized: the same key can produce many distinct
+          // valid signatures for the same hash. Dedup must therefore key on the
+          // derived address alone, otherwise an attacker could replay one key into
+          // the threshold N times via N different signatures.
+          if (ByteArray.matrixContains(executedSignList, derivedAddr)) {
+            continue;
+          }
+          long weight = TransactionCapsule.getWeight(permission, derivedAddr);
+          if (weight == 0) {
+            return Pair.of(true, DATA_FALSE);
+          }
+          if (!FNDSA.verify(pk, hash, sig)) {
+            return Pair.of(true, DATA_FALSE);
+          }
+          totalWeight += weight;
+          executedSignList.add(derivedAddr);
+        }
+
+        if (totalWeight >= permission.getThreshold()) {
+          return Pair.of(true, dataOne());
+        }
+      } catch (Throwable t) {
+        if (t instanceof OutOfTimeException) {
+          throw t;
+        }
+        logger.info("ValidateMultiSign(0x17) error:{}", t.getMessage());
+      }
+      return Pair.of(true, DATA_FALSE);
+    }
+  }
+
+  /**
+   * 0x18 BatchValidateSignPQ — independent per-element Falcon-512 verify.
+   * <p>Returns a 256-bit bitmap (matching 0x0A) where bit {@code i} is set iff
+   * {@code derive(pk_i) == expectedAddr_i} AND {@code FNDSA.verify(pk_i, hash, sig_i)}.
+   *
+   * <p>ABI:
+   * <pre>
+   *   batchValidateSignPQ(
+   *       bytes32   hash,                  // word[0]
+   *       bytes[]   signatures,            // word[1] = offset; each 1..752 B
+   *       bytes[]   publicKeys,            // word[2] = offset; each 896 B
+   *       bytes32[] expectedAddresses      // word[3] = offset; 21-byte addr in low 21 bytes
+   *   ) returns (bytes32)
+   * </pre>
+   *
+   * <p>Reuses the {@code BatchValidateSign.workers} pool when not in a constant
+   * call and enforces {@code getCPUTimeLeftInNanoSecond()} timeout. {@code MAX_SIZE = 16}.
+   * Energy is {@code cnt × 15000}.
+   */
+  public static class BatchValidateSignPQ extends PrecompiledContract {
+
+    private static final int ENERGY_PER_SIGN = 15000;
+    private static final int MAX_SIZE = 16;
+    private static final int PK_LEN = FNDSA.PUBLIC_KEY_LENGTH;
+    private static final int MAX_SIG_LEN = FNDSA.SIGNATURE_LENGTH;
+
+    @Override
+    public long getEnergyForData(byte[] data) {
+      try {
+        DataWord[] words = DataWord.parseArray(data);
+        int cnt = words[words[1].intValueSafe() / WORD_SIZE].intValueSafe();
+        return (long) cnt * ENERGY_PER_SIGN;
+      } catch (Throwable t) {
+        return (long) MAX_SIZE * ENERGY_PER_SIGN;
+      }
+    }
+
+    @Override
+    public Pair<Boolean, byte[]> execute(byte[] data) {
+      try {
+        return doExecute(data);
+      } catch (Throwable t) {
+        if (t instanceof OutOfTimeException) {
+          throw (OutOfTimeException) t;
+        }
+        if (t instanceof InterruptedException) {
+          Thread.currentThread().interrupt();
+        }
+        return Pair.of(true, new byte[WORD_SIZE]);
+      }
+    }
+
+    private Pair<Boolean, byte[]> doExecute(byte[] data)
+        throws InterruptedException, ExecutionException {
+      DataWord[] words = DataWord.parseArray(data);
+      byte[] hash = words[0].getData();
+
+      int sigArrayWord = words[1].intValueSafe() / WORD_SIZE;
+      int pkArrayWord = words[2].intValueSafe() / WORD_SIZE;
+      int addrArrayWord = words[3].intValueSafe() / WORD_SIZE;
+
+      int sigArraySize = words[sigArrayWord].intValueSafe();
+      int pkArraySize = words[pkArrayWord].intValueSafe();
+      int addrArraySize = words[addrArrayWord].intValueSafe();
+
+      if (sigArraySize > MAX_SIZE || pkArraySize > MAX_SIZE
+          || addrArraySize > MAX_SIZE
+          || sigArraySize != pkArraySize || sigArraySize != addrArraySize) {
+        return Pair.of(true, DATA_FALSE);
+      }
+
+      byte[][] signatures = extractBytesArray(words, sigArrayWord, data);
+      byte[][] publicKeys = extractBytesArray(words, pkArrayWord, data);
+      byte[][] addresses = extractBytes32Array(words, addrArrayWord);
+
+      int cnt = signatures.length;
+      if (cnt == 0) {
+        return Pair.of(true, DATA_FALSE);
+      }
+
+      byte[] res = new byte[WORD_SIZE];
+      if (isConstantCall()) {
+        for (int i = 0; i < cnt; i++) {
+          if (verifyOne(signatures[i], publicKeys[i], hash, addresses[i])) {
+            res[i] = 1;
+          }
+        }
+      } else {
+        CountDownLatch countDownLatch = new CountDownLatch(cnt);
+        List<Future<PqVerifyResult>> futures = new ArrayList<>(cnt);
+
+        for (int i = 0; i < cnt; i++) {
+          Future<PqVerifyResult> future = BatchValidateSign.workers.submit(
+              new PqVerifyTask(countDownLatch, hash, signatures[i],
+                  publicKeys[i], addresses[i], i));
+          futures.add(future);
+        }
+
+        boolean withNoTimeout = countDownLatch
+            .await(getCPUTimeLeftInNanoSecond(), TimeUnit.NANOSECONDS);
+
+        if (!withNoTimeout) {
+          logger.info("BatchValidateSignPQ timeout");
+          throw Program.Exception.notEnoughTime("call BatchValidateSignPQ precompile method");
+        }
+
+        for (Future<PqVerifyResult> future : futures) {
+          PqVerifyResult r = future.get();
+          if (r.success) {
+            res[r.nonce] = 1;
+          }
+        }
+      }
+      return Pair.of(true, res);
+    }
+
+    private static boolean verifyOne(byte[] sig, byte[] pk, byte[] hash,
+                                     byte[] expectedAddr) {
+      if (pk == null || pk.length != PK_LEN
+          || sig == null || sig.length < 1 || sig.length > MAX_SIG_LEN) {
+        return false;
+      }
+      try {
+        byte[] derived = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pk);
+        if (!DataWord.equalAddressByteArray(derived, expectedAddr)) {
+          return false;
+        }
+        return FNDSA.verify(pk, hash, sig);
+      } catch (Throwable t) {
+        return false;
+      }
+    }
+
+    @AllArgsConstructor
+    private static class PqVerifyTask implements Callable<PqVerifyResult> {
+
+      private CountDownLatch countDownLatch;
+      private byte[] hash;
+      private byte[] signature;
+      private byte[] publicKey;
+      private byte[] expectedAddr;
+      private int nonce;
+
+      @Override
+      public PqVerifyResult call() {
+        try {
+          return new PqVerifyResult(
+              verifyOne(signature, publicKey, hash, expectedAddr), nonce);
+        } finally {
+          countDownLatch.countDown();
+        }
+      }
+    }
+
+    @AllArgsConstructor
+    private static class PqVerifyResult {
+
+      private boolean success;
+      private int nonce;
     }
   }
 

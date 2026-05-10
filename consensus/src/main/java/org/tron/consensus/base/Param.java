@@ -5,6 +5,7 @@ import java.util.List;
 import lombok.Getter;
 import lombok.Setter;
 import org.tron.common.args.GenesisBlock;
+import org.tron.protos.Protocol.PQScheme;
 
 public class Param {
 
@@ -67,10 +68,34 @@ public class Param {
     @Setter
     private ByteString witnessAddress;
 
+    private byte[] pqPrivateKey;
+
+    private byte[] pqPublicKey;
+
+    @Getter
+    @Setter
+    private PQScheme pqScheme;
+
     public Miner(byte[] privateKey, ByteString privateKeyAddress, ByteString witnessAddress) {
       this.privateKey = privateKey;
       this.privateKeyAddress = privateKeyAddress;
       this.witnessAddress = witnessAddress;
+    }
+
+    public byte[] getPQPrivateKey() {
+      return pqPrivateKey == null ? null : pqPrivateKey.clone();
+    }
+
+    public void setPQPrivateKey(byte[] pqPrivateKey) {
+      this.pqPrivateKey = pqPrivateKey == null ? null : pqPrivateKey.clone();
+    }
+
+    public byte[] getPQPublicKey() {
+      return pqPublicKey == null ? null : pqPublicKey.clone();
+    }
+
+    public void setPQPublicKey(byte[] pqPublicKey) {
+      this.pqPublicKey = pqPublicKey == null ? null : pqPublicKey.clone();
     }
   }
 
