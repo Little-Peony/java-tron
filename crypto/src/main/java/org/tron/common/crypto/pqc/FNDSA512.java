@@ -1,5 +1,6 @@
 package org.tron.common.crypto.pqc;
 
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
 import org.bouncycastle.crypto.params.ParametersWithRandom;
@@ -24,7 +25,7 @@ import org.tron.protos.Protocol.PQScheme;
  * {@code <= SIGNATURE_LENGTH}. BouncyCastle 1.79's {@code FalconNIST.CRYPTO_BYTES}
  * for Falcon-512 is 690 bytes, well below the 752-byte protocol cap.
  */
-public final class FNDSA implements PQSignature {
+public final class FNDSA512 implements PQSignature {
 
   /**
    * Falcon-512 encoded private key from BC: f || g || F, where f and g are each
@@ -58,13 +59,13 @@ public final class FNDSA implements PQSignature {
   private final byte[] privateKey;
   private final byte[] publicKey;
 
-  public FNDSA() {
+  public FNDSA512() {
     AsymmetricCipherKeyPair kp = generateKeyPair(new SecureRandom());
     this.privateKey = ((FalconPrivateKeyParameters) kp.getPrivate()).getEncoded();
     this.publicKey = ((FalconPublicKeyParameters) kp.getPublic()).getH();
   }
 
-  public FNDSA(byte[] seed) {
+  public FNDSA512(byte[] seed) {
     if (seed == null || seed.length != SEED_LENGTH) {
       throw new IllegalArgumentException("FN-DSA seed length must be " + SEED_LENGTH);
     }
@@ -73,7 +74,7 @@ public final class FNDSA implements PQSignature {
     this.publicKey = ((FalconPublicKeyParameters) kp.getPublic()).getH();
   }
 
-  public FNDSA(byte[] privateKey, byte[] publicKey) {
+  public FNDSA512(byte[] privateKey, byte[] publicKey) {
     if (privateKey == null || privateKey.length != PRIVATE_KEY_LENGTH) {
       throw new IllegalArgumentException(
           "FN-DSA private key length must be " + PRIVATE_KEY_LENGTH);
@@ -82,6 +83,7 @@ public final class FNDSA implements PQSignature {
       throw new IllegalArgumentException(
           "FN-DSA public key length must be " + PUBLIC_KEY_LENGTH);
     }
+    requireConsistent(privateKey, publicKey);
     this.privateKey = privateKey.clone();
     this.publicKey = publicKey.clone();
   }
@@ -90,10 +92,10 @@ public final class FNDSA implements PQSignature {
    * Builds an instance from the extended private key encoding {@code f ‖ g ‖ F ‖ h}
    * ({@link #PRIVATE_KEY_WITH_PUBLIC_KEY_LENGTH} bytes), as produced by
    * {@link #getPrivateKeyWithPublicKey()}. Provided as a static factory rather
-   * than an additional {@code FNDSA(byte[])} constructor because Java cannot
-   * overload {@link #FNDSA(byte[]) the seed constructor} on length alone.
+   * than an additional {@code FNDSA512(byte[])} constructor because Java cannot
+   * overload {@link #FNDSA512(byte[]) the seed constructor} on length alone.
    */
-  public static FNDSA fromPrivateKeyWithPublicKey(byte[] extendedPrivateKey) {
+  public static FNDSA512 fromPrivateKeyWithPublicKey(byte[] extendedPrivateKey) {
     if (extendedPrivateKey == null
         || extendedPrivateKey.length != PRIVATE_KEY_WITH_PUBLIC_KEY_LENGTH) {
       throw new IllegalArgumentException(
@@ -104,7 +106,7 @@ public final class FNDSA implements PQSignature {
     byte[] pk = new byte[PUBLIC_KEY_LENGTH];
     System.arraycopy(extendedPrivateKey, 0, sk, 0, PRIVATE_KEY_LENGTH);
     System.arraycopy(extendedPrivateKey, PRIVATE_KEY_LENGTH, pk, 0, PUBLIC_KEY_LENGTH);
-    return new FNDSA(sk, pk);
+    return new FNDSA512(sk, pk);
   }
 
   @Override
@@ -131,6 +133,16 @@ public final class FNDSA implements PQSignature {
   @Override
   public byte[] getPrivateKey() {
     return privateKey.clone();
+  }
+
+  /**
+   * FN-DSA accepts the bare {@link #PRIVATE_KEY_LENGTH} form as well as the
+   * extended {@link #PRIVATE_KEY_WITH_PUBLIC_KEY_LENGTH} form used for local
+   * witness config. Override of {@link PQSignature#validatePrivateKey}.
+   */
+  @Override
+  public void validatePrivateKey(byte[] privateKey) {
+    validatePrivateKeyBytes(privateKey);
   }
 
   /**
@@ -245,6 +257,33 @@ public final class FNDSA implements PQSignature {
     FalconKeyPairGenerator generator = new FalconKeyPairGenerator();
     generator.init(new FalconKeyGenerationParameters(random, PARAMS));
     return generator.generateKeyPair();
+  }
+
+  /**
+   * Domain-separated probe used by {@link #requireConsistent}; not a security
+   * boundary (Falcon hashes the message internally), the constant just makes the
+   * keypair self-check searchable in logs/stack traces.
+   */
+  private static final byte[] CONSISTENCY_PROBE =
+      "tron:FN-DSA-512:keypair-consistency-probe".getBytes(StandardCharsets.UTF_8);
+
+  /**
+   * Probe that the supplied (sk, pk) actually form a keypair. Falcon has no
+   * public API to derive {@code h} from {@code (f, g)} alone (bcgit/bc-java#2297),
+   * so we sign and verify a fixed probe message. Runs once per witness load and
+   * costs a few ms on Falcon-512 — acceptable for a startup-time misconfiguration
+   * check, and avoids advertising an address that signatures will never satisfy.
+   */
+  private static void requireConsistent(byte[] privateKey, byte[] publicKey) {
+    byte[] sig;
+    try {
+      sig = sign(privateKey, CONSISTENCY_PROBE);
+    } catch (RuntimeException e) {
+      throw new IllegalArgumentException("FN-DSA private/public key mismatch", e);
+    }
+    if (!verify(publicKey, CONSISTENCY_PROBE, sig)) {
+      throw new IllegalArgumentException("FN-DSA private/public key mismatch");
+    }
   }
 
   private static void validatePrivateKeyBytes(byte[] privateKey) {

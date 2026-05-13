@@ -10,11 +10,11 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.utils.client.utils.AbiUtil;
 import org.tron.core.vm.PrecompiledContracts;
-import org.tron.core.vm.PrecompiledContracts.BatchValidateSignPQ;
+import org.tron.core.vm.PrecompiledContracts.BatchValidateFnDsa512;
 import org.tron.core.vm.PrecompiledContracts.PrecompiledContract;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.protos.Protocol.PQScheme;
@@ -22,17 +22,17 @@ import org.tron.protos.Protocol.PQScheme;
 /**
  * Unit tests for the 0x18 batch independent Falcon-512 verify precompile.
  * Returns a 256-bit bitmap where bit i is set iff
- * {@code derive(pk_i) == expectedAddr_i && FNDSA.verify(pk_i, hash, sig_i)}.
+ * {@code derive(pk_i) == expectedAddr_i && FNDSA512.verify(pk_i, hash, sig_i)}.
  * Stateless — no chain DB.
  */
 @Slf4j
-public class BatchValidateSignPQTest {
+public class BatchValidateFnDsa512Test {
 
   private static final DataWord ADDR_0X18 = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000018");
 
   private static final String METHOD_SIGN =
-      "batchvalidatesignpq(bytes32,bytes[],bytes[],bytes32[])";
+      "batchvalidatefndsa512(bytes32,bytes[],bytes[],bytes32[])";
 
   private static final byte[] HASH;
 
@@ -43,7 +43,7 @@ public class BatchValidateSignPQTest {
     }
   }
 
-  private final BatchValidateSignPQ contract = new BatchValidateSignPQ();
+  private final BatchValidateFnDsa512 contract = new BatchValidateFnDsa512();
 
   @Before
   public void enableProposal() {
@@ -65,7 +65,7 @@ public class BatchValidateSignPQTest {
   public void switchOn_returnsContract() {
     PrecompiledContract pc = PrecompiledContracts.getContractForAddress(ADDR_0X18);
     Assert.assertNotNull(pc);
-    Assert.assertTrue(pc instanceof BatchValidateSignPQ);
+    Assert.assertTrue(pc instanceof BatchValidateFnDsa512);
   }
 
   @Test
@@ -76,7 +76,7 @@ public class BatchValidateSignPQTest {
     List<String> pks = new ArrayList<>(n);
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
-      FNDSA k = new FNDSA();
+      FNDSA512 k = new FNDSA512();
       sigs.add(Hex.toHexString(k.sign(HASH)));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
@@ -93,8 +93,8 @@ public class BatchValidateSignPQTest {
   @Test
   public void constantCall_mismatchedAddress_clearsBit() {
     contract.setConstantCall(true);
-    FNDSA k1 = new FNDSA();
-    FNDSA k2 = new FNDSA();
+    FNDSA512 k1 = new FNDSA512();
+    FNDSA512 k2 = new FNDSA512();
     List<String> sigs = Arrays.asList(
         Hex.toHexString(k1.sign(HASH)),
         Hex.toHexString(k2.sign(HASH)));
@@ -114,7 +114,7 @@ public class BatchValidateSignPQTest {
   @Test
   public void constantCall_tamperedSignature_clearsBit() {
     contract.setConstantCall(true);
-    FNDSA k = new FNDSA();
+    FNDSA512 k = new FNDSA512();
     byte[] sig = k.sign(HASH);
     sig[0] ^= 0x01;
     List<String> sigs = Collections1(Hex.toHexString(sig));
@@ -128,7 +128,7 @@ public class BatchValidateSignPQTest {
   @Test
   public void constantCall_wrongPkLength_clearsBit() {
     contract.setConstantCall(true);
-    FNDSA k = new FNDSA();
+    FNDSA512 k = new FNDSA512();
     byte[] truncatedPk = Arrays.copyOf(k.getPublicKey(), k.getPublicKey().length - 1);
     List<String> sigs = Collections1(Hex.toHexString(k.sign(HASH)));
     List<String> pks = Collections1(Hex.toHexString(truncatedPk));
@@ -147,7 +147,7 @@ public class BatchValidateSignPQTest {
     List<String> pks = new ArrayList<>(n);
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
-      FNDSA k = new FNDSA();
+      FNDSA512 k = new FNDSA512();
       sigs.add(Hex.toHexString(k.sign(HASH)));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
@@ -161,7 +161,7 @@ public class BatchValidateSignPQTest {
   @Test
   public void mismatchedArrayLengths_returnsZero() {
     contract.setConstantCall(true);
-    FNDSA k = new FNDSA();
+    FNDSA512 k = new FNDSA512();
     List<String> sigs = Collections1(Hex.toHexString(k.sign(HASH)));
     List<String> pks = Arrays.asList(
         Hex.toHexString(k.getPublicKey()), Hex.toHexString(k.getPublicKey()));
@@ -180,7 +180,7 @@ public class BatchValidateSignPQTest {
     List<String> pks = new ArrayList<>(n);
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
-      FNDSA k = new FNDSA();
+      FNDSA512 k = new FNDSA512();
       sigs.add(Hex.toHexString(k.sign(HASH)));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
@@ -197,13 +197,13 @@ public class BatchValidateSignPQTest {
     List<String> pks = new ArrayList<>(n);
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
-      FNDSA k = new FNDSA();
+      FNDSA512 k = new FNDSA512();
       sigs.add(Hex.toHexString(k.sign(HASH)));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
     }
     byte[] input = encode(HASH, sigs, pks, addrs);
-    Assert.assertEquals(3L * 15000L, contract.getEnergyForData(input));
+    Assert.assertEquals(3L * 2000L, contract.getEnergyForData(input));
   }
 
   @Test
@@ -221,7 +221,7 @@ public class BatchValidateSignPQTest {
     List<String> pks = new ArrayList<>(n);
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
-      FNDSA k = new FNDSA();
+      FNDSA512 k = new FNDSA512();
       // Sign HASH...
       sigs.add(Hex.toHexString(k.sign(HASH)));
       pks.add(Hex.toHexString(k.getPublicKey()));
@@ -243,7 +243,7 @@ public class BatchValidateSignPQTest {
     List<String> pks = new ArrayList<>(n);
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
-      FNDSA k = new FNDSA();
+      FNDSA512 k = new FNDSA512();
       sigs.add(Hex.toHexString(k.sign(HASH)));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
@@ -267,7 +267,7 @@ public class BatchValidateSignPQTest {
     List<String> pks = new ArrayList<>(n);
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
-      FNDSA k = new FNDSA();
+      FNDSA512 k = new FNDSA512();
       byte[] sig = k.sign(HASH);
       // Tamper entries 1 and 3.
       if (i == 1 || i == 3) {
@@ -287,7 +287,7 @@ public class BatchValidateSignPQTest {
   @Test
   public void sigTooLong_clearsBit() {
     contract.setConstantCall(true);
-    FNDSA k = new FNDSA();
+    FNDSA512 k = new FNDSA512();
     byte[] oversized = new byte[800];
     Arrays.fill(oversized, (byte) 0x99);
     List<String> sigs = Collections1(Hex.toHexString(oversized));
@@ -303,7 +303,11 @@ public class BatchValidateSignPQTest {
   private Pair<Boolean, byte[]> run(byte[] hash, List<String> sigs,
                                     List<String> pks, List<String> addrs) {
     byte[] input = encode(hash, sigs, pks, addrs);
-    contract.setVmShouldEndInUs(System.nanoTime() / 1000 + 5_000_000L);
+    // Preserve any longer budget callers set (e.g. atMaxSize16_setsAllBits and
+    // asyncPath_* need 10-30s for 16 parallel Falcon-512 verifies on slow CI).
+    if (contract.getVmShouldEndInUs() == 0) {
+      contract.setVmShouldEndInUs(System.nanoTime() / 1000 + 5_000_000L);
+    }
     Pair<Boolean, byte[]> ret = contract.execute(input);
     logger.info("0x18 bitmap: {}", Hex.toHexString(ret.getRight()));
     return ret;

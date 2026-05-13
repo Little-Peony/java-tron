@@ -8,7 +8,7 @@ import java.util.Collections;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.config.DefaultConfig;
@@ -56,8 +56,8 @@ public class PQFullNode {
         .setLevel(ch.qos.logback.classic.Level.INFO);
 
     // ── 1. Derive the same deterministic keys used by PQWitnessNode ──────
-    FNDSA witnessKp = new FNDSA(PQWitnessNode.WITNESS_SEED);
-    FNDSA userKp    = new FNDSA(PQWitnessNode.USER_SEED);
+    FNDSA512 witnessKp = new FNDSA512(PQWitnessNode.WITNESS_SEED);
+    FNDSA512 userKp    = new FNDSA512(PQWitnessNode.USER_SEED);
 
     byte[] witnessPub = witnessKp.getPublicKey();
     byte[] userPub    = userKp.getPublicKey();
@@ -68,7 +68,7 @@ public class PQFullNode {
     System.out.println("HTTP port:      " + HTTP_PORT);
     System.out.println("P2P port:       " + P2P_PORT);
     System.out.println("Witness address (expected): "
-        + ByteArray.toHexString(FNDSA.computeAddress(witnessPub)));
+        + ByteArray.toHexString(FNDSA512.computeAddress(witnessPub)));
 
     // ── 2. Configure node (no -w: this is a pure fullnode) ────────────────
     File dbDir = Files.createTempDirectory("pqc-fullnode-").toFile();

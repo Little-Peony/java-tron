@@ -14,7 +14,7 @@ import org.junit.Test;
 import org.tron.common.BaseTest;
 import org.tron.common.TestConstants;
 import org.tron.common.crypto.ECKey;
-import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
@@ -27,7 +27,7 @@ import org.tron.core.config.args.Args;
 import org.tron.core.store.StoreFactory;
 import org.tron.core.vm.PrecompiledContracts;
 import org.tron.core.vm.PrecompiledContracts.PrecompiledContract;
-import org.tron.core.vm.PrecompiledContracts.ValidateMultiSignPQ;
+import org.tron.core.vm.PrecompiledContracts.ValidateMultiFnDsa512;
 import org.tron.core.vm.config.VMConfig;
 import org.tron.core.vm.repository.Repository;
 import org.tron.core.vm.repository.RepositoryImpl;
@@ -40,7 +40,7 @@ import org.tron.protos.Protocol.PQScheme;
  * Falcon-512 entries alongside ECDSA against the same Permission.keys[].
  */
 @Slf4j
-public class ValidateMultiSignPQTest extends BaseTest {
+public class ValidateMultiFnDsa512Test extends BaseTest {
 
   private static final DataWord ADDR_0X17 = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000017");
@@ -56,7 +56,7 @@ public class ValidateMultiSignPQTest extends BaseTest {
     Arrays.fill(longData, (byte) 7);
   }
 
-  private final ValidateMultiSignPQ contract = new ValidateMultiSignPQ();
+  private final ValidateMultiFnDsa512 contract = new ValidateMultiFnDsa512();
 
   @Before
   public void before() {
@@ -75,7 +75,7 @@ public class ValidateMultiSignPQTest extends BaseTest {
   public void switchOn_returnsContract() {
     PrecompiledContract pc = PrecompiledContracts.getContractForAddress(ADDR_0X17);
     Assert.assertNotNull(pc);
-    Assert.assertTrue(pc instanceof ValidateMultiSignPQ);
+    Assert.assertTrue(pc instanceof ValidateMultiFnDsa512);
   }
 
   @Test
@@ -111,8 +111,8 @@ public class ValidateMultiSignPQTest extends BaseTest {
 
   @Test
   public void purePqThresholdReached_returnsOne() {
-    FNDSA pq1 = new FNDSA();
-    FNDSA pq2 = new FNDSA();
+    FNDSA512 pq1 = new FNDSA512();
+    FNDSA512 pq2 = new FNDSA512();
     ECKey owner = new ECKey();
     byte[] addr1 = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq1.getPublicKey());
     byte[] addr2 = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq2.getPublicKey());
@@ -137,7 +137,7 @@ public class ValidateMultiSignPQTest extends BaseTest {
   @Test
   public void mixedEcdsaAndPq_returnsOne() {
     ECKey k1 = new ECKey();
-    FNDSA pq1 = new FNDSA();
+    FNDSA512 pq1 = new FNDSA512();
     ECKey owner = new ECKey();
     byte[] pqAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq1.getPublicKey());
     setupPermission(owner, Collections.singletonList(k1.getAddress()), Collections.singletonList(1),
@@ -157,7 +157,7 @@ public class ValidateMultiSignPQTest extends BaseTest {
 
   @Test
   public void pqSignatureForgery_returnsZero() {
-    FNDSA pq1 = new FNDSA();
+    FNDSA512 pq1 = new FNDSA512();
     ECKey owner = new ECKey();
     byte[] pqAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq1.getPublicKey());
     setupPermission(owner, Collections.emptyList(), Collections.emptyList(),
@@ -178,7 +178,7 @@ public class ValidateMultiSignPQTest extends BaseTest {
 
   @Test
   public void wrongPqPublicKeyLength_returnsZero() {
-    FNDSA pq1 = new FNDSA();
+    FNDSA512 pq1 = new FNDSA512();
     ECKey owner = new ECKey();
     byte[] pqAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq1.getPublicKey());
     setupPermission(owner, Collections.emptyList(), Collections.emptyList(),
@@ -198,8 +198,8 @@ public class ValidateMultiSignPQTest extends BaseTest {
 
   @Test
   public void mismatchedPqArrayLengths_returnsZero() {
-    FNDSA pq1 = new FNDSA();
-    FNDSA pq2 = new FNDSA();
+    FNDSA512 pq1 = new FNDSA512();
+    FNDSA512 pq2 = new FNDSA512();
     ECKey owner = new ECKey();
     byte[] addr1 = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq1.getPublicKey());
     setupPermission(owner, Collections.emptyList(), Collections.emptyList(),
@@ -247,7 +247,7 @@ public class ValidateMultiSignPQTest extends BaseTest {
 
   @Test
   public void duplicatePqSig_doesNotDoubleCount() {
-    FNDSA pq1 = new FNDSA();
+    FNDSA512 pq1 = new FNDSA512();
     ECKey owner = new ECKey();
     byte[] pqAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq1.getPublicKey());
     setupPermission(owner, Collections.emptyList(), Collections.emptyList(),
@@ -268,7 +268,7 @@ public class ValidateMultiSignPQTest extends BaseTest {
 
   @Test
   public void energyChargesEcdsaAndPqSeparately() {
-    FNDSA pq1 = new FNDSA();
+    FNDSA512 pq1 = new FNDSA512();
     ECKey k1 = new ECKey();
     ECKey owner = new ECKey();
     byte[] pqAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq1.getPublicKey());
@@ -283,8 +283,8 @@ public class ValidateMultiSignPQTest extends BaseTest {
     List<String> pqPks = Collections.singletonList(Hex.toHexString(pq1.getPublicKey()));
 
     byte[] input = encodeInput(owner.getAddress(), 2, data, ecdsaSigs, pqSigs, pqPks);
-    // 1 ECDSA × 1500 + 1 PQ × 15000 = 16500
-    Assert.assertEquals(16500L, contract.getEnergyForData(input));
+    // 1 ECDSA × 1500 + 1 PQ × 2000 = 3500
+    Assert.assertEquals(3500L, contract.getEnergyForData(input));
   }
 
   @Test
@@ -308,8 +308,8 @@ public class ValidateMultiSignPQTest extends BaseTest {
 
   @Test
   public void pqKeyNotInPermission_returnsZero() {
-    FNDSA inPerm = new FNDSA();
-    FNDSA outsider = new FNDSA();
+    FNDSA512 inPerm = new FNDSA512();
+    FNDSA512 outsider = new FNDSA512();
     ECKey owner = new ECKey();
     byte[] inAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, inPerm.getPublicKey());
     setupPermission(owner, Collections.emptyList(), Collections.emptyList(),
@@ -330,7 +330,7 @@ public class ValidateMultiSignPQTest extends BaseTest {
 
   @Test
   public void pqSigTooLong_returnsZero() {
-    FNDSA pq1 = new FNDSA();
+    FNDSA512 pq1 = new FNDSA512();
     ECKey owner = new ECKey();
     byte[] pqAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq1.getPublicKey());
     setupPermission(owner, Collections.emptyList(), Collections.emptyList(),
@@ -372,7 +372,7 @@ public class ValidateMultiSignPQTest extends BaseTest {
     // threshold. Verifies 0x17 does not silently skip a forged PQ signature.
     ECKey k1 = new ECKey();
     ECKey k2 = new ECKey();
-    FNDSA pq1 = new FNDSA();
+    FNDSA512 pq1 = new FNDSA512();
     ECKey owner = new ECKey();
     byte[] pqAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pq1.getPublicKey());
     setupPermission(owner,

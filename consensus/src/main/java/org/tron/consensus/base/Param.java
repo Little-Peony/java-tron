@@ -54,6 +54,14 @@ public class Param {
     return param;
   }
 
+  /** Signing key family carried by a {@link Miner}. */
+  public enum MinerType {
+    /** Legacy ECDSA / SM2 witness; signs blocks via {@code BlockCapsule.sign}. */
+    ECDSA,
+    /** Post-quantum witness; signs blocks via {@code signWitnessAuth}. */
+    PQ
+  }
+
   public class Miner {
 
     @Getter
@@ -75,6 +83,15 @@ public class Param {
     @Getter
     @Setter
     private PQScheme pqScheme;
+
+    /**
+     * Explicit signing-family marker so the block producer doesn't have to infer
+     * key type from {@code privateKey == null}. Defaults to {@link MinerType#ECDSA};
+     * PQ-only miners must call {@link #setType(MinerType)} with {@link MinerType#PQ}.
+     */
+    @Getter
+    @Setter
+    private MinerType type = MinerType.ECDSA;
 
     public Miner(byte[] privateKey, ByteString privateKeyAddress, ByteString witnessAddress) {
       this.privateKey = privateKey;

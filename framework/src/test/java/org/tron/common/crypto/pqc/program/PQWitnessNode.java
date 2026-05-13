@@ -12,7 +12,7 @@ import org.bouncycastle.util.encoders.Hex;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
@@ -73,13 +73,13 @@ public class PQWitnessNode {
         .setLevel(ch.qos.logback.classic.Level.INFO);
 
     // ── 1. Derive deterministic keypairs ──────────────────────────────────
-    FNDSA witnessKp = new FNDSA(WITNESS_SEED);
-    FNDSA userKp    = new FNDSA(USER_SEED);
+    FNDSA512 witnessKp = new FNDSA512(WITNESS_SEED);
+    FNDSA512 userKp    = new FNDSA512(USER_SEED);
 
     byte[] witnessPub  = witnessKp.getPublicKey();
-    byte[] witnessAddr = FNDSA.computeAddress(witnessPub);
+    byte[] witnessAddr = FNDSA512.computeAddress(witnessPub);
     byte[] userPub     = userKp.getPublicKey();
-    byte[] signerAddr  = FNDSA.computeAddress(userPub);
+    byte[] signerAddr  = FNDSA512.computeAddress(userPub);
 
     System.out.println("=== PQC Witness Node ===");
     System.out.println("Witness address (FN-DSA-512): " + ByteArray.toHexString(witnessAddr));
@@ -185,12 +185,12 @@ public class PQWitnessNode {
   }
 
   private static byte[] filledSeed(int value) {
-    byte[] seed = new byte[FNDSA.SEED_LENGTH];
+    byte[] seed = new byte[FNDSA512.SEED_LENGTH];
     Arrays.fill(seed, (byte) value);
     return seed;
   }
 
-  private static Path writeWitnessConfig(FNDSA witnessKp) throws java.io.IOException {
+  private static Path writeWitnessConfig(FNDSA512 witnessKp) throws java.io.IOException {
     Path conf = Files.createTempFile("pqc-witness-", ".conf");
     conf.toFile().deleteOnExit();
     String body = "include classpath(\"config-test.conf\")\n"

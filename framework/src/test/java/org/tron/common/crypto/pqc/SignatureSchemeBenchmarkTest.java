@@ -77,16 +77,16 @@ public class SignatureSchemeBenchmarkTest {
 
   private Result benchFnDsa() {
     for (int i = 0; i < WARMUP; i++) {
-      FNDSA k = new FNDSA();
+      FNDSA512 k = new FNDSA512();
       byte[] sig = k.sign(MESSAGE);
       k.verify(MESSAGE, sig);
     }
 
     long keygenNs = 0;
-    FNDSA[] keys = new FNDSA[ITERATIONS];
+    FNDSA512[] keys = new FNDSA512[ITERATIONS];
     for (int i = 0; i < ITERATIONS; i++) {
       long t0 = System.nanoTime();
-      keys[i] = new FNDSA();
+      keys[i] = new FNDSA512();
       keygenNs += System.nanoTime() - t0;
     }
 

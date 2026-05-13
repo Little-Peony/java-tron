@@ -75,28 +75,28 @@ public final class PQSchemeRegistry {
   static {
     EnumMap<PQScheme, SchemeInfo> m = new EnumMap<>(PQScheme.class);
     m.put(PQScheme.FN_DSA_512, new SchemeInfo(
-        FNDSA.PRIVATE_KEY_LENGTH, FNDSA.PUBLIC_KEY_LENGTH,
-        FNDSA.SIGNATURE_LENGTH, FNDSA.SEED_LENGTH,
+        FNDSA512.PRIVATE_KEY_LENGTH, FNDSA512.PUBLIC_KEY_LENGTH,
+        FNDSA512.SIGNATURE_LENGTH, FNDSA512.SEED_LENGTH,
         KECCAK_256,
         new SignatureOps() {
           @Override
           public byte[] sign(byte[] privateKey, byte[] message) {
-            return FNDSA.sign(privateKey, message);
+            return FNDSA512.sign(privateKey, message);
           }
 
           @Override
           public boolean verify(byte[] publicKey, byte[] message, byte[] signature) {
-            return FNDSA.verify(publicKey, message, signature);
+            return FNDSA512.verify(publicKey, message, signature);
           }
 
           @Override
           public PQSignature fromSeed(byte[] seed) {
-            return new FNDSA(seed);
+            return new FNDSA512(seed);
           }
 
           @Override
           public PQSignature fromKeypair(byte[] privateKey, byte[] publicKey) {
-            return new FNDSA(privateKey, publicKey);
+            return new FNDSA512(privateKey, publicKey);
           }
         }));
     SCHEMES = Collections.unmodifiableMap(m);

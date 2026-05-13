@@ -808,6 +808,7 @@ public class ProposalUtilTest extends BaseTest {
     ThrowingRunnable proposeTwo = () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
         code, 2);
 
+    forkUtils.init(dbManager.getChainBaseManager());
     byte[] stats = new byte[27];
     forkUtils.getManager().getDynamicPropertiesStore()
         .statsByVersion(ForkBlockVersionEnum.VERSION_4_8_1.getValue(), stats);

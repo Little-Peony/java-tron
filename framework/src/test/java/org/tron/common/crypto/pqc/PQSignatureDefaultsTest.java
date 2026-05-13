@@ -9,7 +9,7 @@ import org.tron.protos.Protocol.PQScheme;
 
 /**
  * Drives the {@link PQSignature} default validator branches (null and
- * length-mismatch) via a minimal in-test implementation. {@link FNDSA}
+ * length-mismatch) via a minimal in-test implementation. {@link FNDSA512}
  * exposes these defaults but the cryptographic instances exercise mostly the
  * happy paths; the explicit fixture here forces the error legs.
  */

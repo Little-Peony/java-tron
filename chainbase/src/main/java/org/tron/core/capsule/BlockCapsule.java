@@ -175,7 +175,9 @@ public class BlockCapsule implements ProtoCapsule<Block> {
 
     ByteString sig = ByteString.copyFrom(ecKeyEngine.Base64toBytes(ecKeyEngine.signHash(getRawHash()
         .getBytes())));
-    BlockHeader blockHeader = this.block.getBlockHeader().toBuilder().setWitnessSignature(sig)
+    BlockHeader blockHeader = this.block.getBlockHeader().toBuilder()
+        .clearPqAuthSig()
+        .setWitnessSignature(sig)
         .build();
 
     this.block = this.block.toBuilder().setBlockHeader(blockHeader).build();
@@ -184,6 +186,7 @@ public class BlockCapsule implements ProtoCapsule<Block> {
 
   public void setPqAuthSig(PQAuthSig pqAuthSig) {
     BlockHeader blockHeader = this.block.getBlockHeader().toBuilder()
+        .clearWitnessSignature()
         .setPqAuthSig(pqAuthSig).build();
     this.block = this.block.toBuilder().setBlockHeader(blockHeader).build();
   }
@@ -201,10 +204,7 @@ public class BlockCapsule implements ProtoCapsule<Block> {
       AccountStore accountStore) throws ValidateSignatureException {
     BlockHeader header = block.getBlockHeader();
     boolean hasLegacy = !header.getWitnessSignature().isEmpty();
-    PQAuthSig pqAuthSig = header.getPqAuthSig();
-    boolean hasPq = pqAuthSig != null
-        && pqAuthSig.getSignature() != null
-        && !pqAuthSig.getSignature().isEmpty();
+    boolean hasPq = header.hasPqAuthSig();
 
     if (hasLegacy && hasPq) {
       throw new ValidateSignatureException(
@@ -217,7 +217,7 @@ public class BlockCapsule implements ProtoCapsule<Block> {
     byte[] witnessAccountAddress = header.getRawData().getWitnessAddress().toByteArray();
     if (hasPq) {
       return validatePQSignature(dynamicPropertiesStore, accountStore,
-          witnessAccountAddress, pqAuthSig);
+          witnessAccountAddress, header.getPqAuthSig());
     }
     return validateLegacySignature(dynamicPropertiesStore, accountStore, witnessAccountAddress);
   }
@@ -233,8 +233,11 @@ public class BlockCapsule implements ProtoCapsule<Block> {
       if (dynamicPropertiesStore.getAllowMultiSign() != 1) {
         return Arrays.equals(sigAddress, witnessAccountAddress);
       }
-      byte[] witnessPermissionAddress = accountStore.get(witnessAccountAddress)
-          .getWitnessPermissionAddress();
+      AccountCapsule witnessAccount = accountStore.get(witnessAccountAddress);
+      if (witnessAccount == null) {
+        throw new ValidateSignatureException("witness account does not exist");
+      }
+      byte[] witnessPermissionAddress = witnessAccount.getWitnessPermissionAddress();
       return Arrays.equals(sigAddress, witnessPermissionAddress);
     } catch (SignatureException e) {
       throw new ValidateSignatureException(e.getMessage());

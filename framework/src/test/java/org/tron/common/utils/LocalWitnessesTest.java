@@ -9,7 +9,7 @@ import java.util.Collections;
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.core.exception.TronError;
 import org.tron.protos.Protocol.PQScheme;
 
@@ -25,8 +25,8 @@ public class LocalWitnessesTest {
 
   @BeforeClass
   public static void generateKeypairs() {
-    FNDSA k1 = new FNDSA();
-    FNDSA k2 = new FNDSA();
+    FNDSA512 k1 = new FNDSA512();
+    FNDSA512 k2 = new FNDSA512();
     priv = Hex.toHexString(k1.getPrivateKey());
     pub = Hex.toHexString(k1.getPublicKey());
     priv2 = Hex.toHexString(k2.getPrivateKey());

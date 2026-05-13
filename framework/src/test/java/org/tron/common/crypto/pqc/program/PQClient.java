@@ -5,15 +5,16 @@ import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import java.nio.ByteBuffer;
-import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import org.tron.api.GrpcAPI.EmptyMessage;
 import org.tron.api.GrpcAPI.Return;
 import org.tron.api.WalletGrpc;
 import org.tron.api.WalletGrpc.WalletBlockingStub;
-import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.FNDSA512;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.Sha256Hash;
 import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.PQAuthSig;
 import org.tron.protos.Protocol.Transaction;
@@ -56,13 +57,13 @@ public class PQClient {
         .setLevel(ch.qos.logback.classic.Level.INFO);
 
     // ── 1. Derive user keypair from same fixed seed as PQWitnessNode ─────
-    byte[] userSeed = new byte[FNDSA.SEED_LENGTH];
+    byte[] userSeed = new byte[FNDSA512.SEED_LENGTH];
     Arrays.fill(userSeed, (byte) 0x02);
-    FNDSA userKp = new FNDSA(userSeed);
+    FNDSA512 userKp = new FNDSA512(userSeed);
 
     byte[] userPub    = userKp.getPublicKey();
     byte[] userPriv   = userKp.getPrivateKey();
-    byte[] signerAddr = FNDSA.computeAddress(userPub);
+    byte[] signerAddr = FNDSA512.computeAddress(userPub);
     byte[] ownerAddr  = PQWitnessNode.USER_ADDR;
 
     System.out.println("=== PQC Client ===");
@@ -83,7 +84,8 @@ public class PQClient {
       Block head = stub.getNowBlock(EmptyMessage.getDefaultInstance());
       byte[] headerRaw = head.getBlockHeader().getRawData().toByteArray();
       long   refNum    = head.getBlockHeader().getRawData().getNumber();
-      byte[] blockHash = sha256(headerRaw);
+      byte[] blockHash = Sha256Hash.of(
+          CommonParameter.getInstance().isECKeyCryptoEngine(), headerRaw).getBytes();
 
       System.out.println("Reference block: #" + refNum
           + " hash=" + ByteArray.toHexString(Arrays.copyOfRange(blockHash, 0, 8)) + "...");
@@ -107,8 +109,10 @@ public class PQClient {
       Transaction tx = Transaction.newBuilder().setRawData(rawData).build();
 
       // ── 5. Sign with FN-DSA-512 pq_auth_sig ─────────────────────────────
-      byte[] txId   = sha256(rawData.toByteArray());
-      byte[] sig    = FNDSA.sign(userPriv, txId);
+      byte[] txId   = Sha256Hash.of(
+          CommonParameter.getInstance().isECKeyCryptoEngine(),
+          rawData.toByteArray()).getBytes();
+      byte[] sig    = FNDSA512.sign(userPriv, txId);
 
       // FN_DSA_512 is the launch scheme → leave scheme at proto3 default and
       // let PQSchemeRegistry.resolve() normalize it on the verifier side.
@@ -135,10 +139,6 @@ public class PQClient {
       channel.shutdown();
       channel.awaitTermination(5, TimeUnit.SECONDS);
     }
-  }
-
-  private static byte[] sha256(byte[] data) throws Exception {
-    return MessageDigest.getInstance("SHA-256").digest(data);
   }
 
   private static byte[] longToBytes(long value) {

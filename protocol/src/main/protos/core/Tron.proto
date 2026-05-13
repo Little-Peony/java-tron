@@ -258,7 +258,7 @@ message Key {
 
 // Per-signer post-quantum authentication witness for a transaction or block.
 // The signing public key is carried in-band; node verifies binding via
-//   derived_addr = 0x41 ‖ deriveHash(scheme, public_key)[0:20]
+//   derived_addr = 0x41 ‖ deriveHash(scheme, public_key)[12..32]
 // and matches against Permission.keys[].address.
 message PQAuthSig {
   PQScheme scheme     = 1;

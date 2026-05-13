@@ -5,7 +5,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.core.vm.PrecompiledContracts;
 import org.tron.core.vm.PrecompiledContracts.PrecompiledContract;
 import org.tron.core.vm.config.VMConfig;
@@ -50,7 +50,7 @@ public class FnDsaPrecompileTest {
 
   @Test
   public void validSignature_returnsOne() {
-    FNDSA key = new FNDSA();
+    FNDSA512 key = new FNDSA512();
     byte[] sig = key.sign(MESSAGE_HASH);
     byte[] input = buildInput(MESSAGE_HASH, sig, key.getPublicKey());
 
@@ -59,12 +59,12 @@ public class FnDsaPrecompileTest {
 
     Assert.assertTrue(result.getLeft());
     Assert.assertArrayEquals(DataWord.ONE().getData(), result.getRight());
-    Assert.assertEquals(2500, pc.getEnergyForData(input));
+    Assert.assertEquals(4000, pc.getEnergyForData(input));
   }
 
   @Test
   public void tamperedMessage_returnsZero() {
-    FNDSA key = new FNDSA();
+    FNDSA512 key = new FNDSA512();
     byte[] sig = key.sign(MESSAGE_HASH);
     byte[] tampered = MESSAGE_HASH.clone();
     tampered[0] ^= 0x01;
@@ -79,7 +79,7 @@ public class FnDsaPrecompileTest {
 
   @Test
   public void tamperedSignature_returnsZero() {
-    FNDSA key = new FNDSA();
+    FNDSA512 key = new FNDSA512();
     byte[] sig = key.sign(MESSAGE_HASH);
     sig[0] ^= 0x01;
     byte[] input = buildInput(MESSAGE_HASH, sig, key.getPublicKey());
@@ -93,8 +93,8 @@ public class FnDsaPrecompileTest {
 
   @Test
   public void wrongPublicKey_returnsZero() {
-    FNDSA signer = new FNDSA();
-    FNDSA other = new FNDSA();
+    FNDSA512 signer = new FNDSA512();
+    FNDSA512 other = new FNDSA512();
     byte[] sig = signer.sign(MESSAGE_HASH);
     byte[] input = buildInput(MESSAGE_HASH, sig, other.getPublicKey());
 
@@ -125,7 +125,7 @@ public class FnDsaPrecompileTest {
 
   @Test
   public void zeroSigLen_returnsZero() {
-    FNDSA key = new FNDSA();
+    FNDSA512 key = new FNDSA512();
     byte[] pk = key.getPublicKey();
     // sig_len = 0 is invalid (must be >= 1)
     // input must be >= MIN_INPUT_LEN (931 = 32 + 2 + 1 + 896) to reach the sigLen check
@@ -143,8 +143,8 @@ public class FnDsaPrecompileTest {
 
   @Test
   public void oversizedSigLen_returnsZero() {
-    // sig_len = 753, which exceeds FNDSA.SIGNATURE_LENGTH (752)
-    byte[] input = new byte[32 + 2 + 753 + FNDSA.PUBLIC_KEY_LENGTH];
+    // sig_len = 753, which exceeds FNDSA512.SIGNATURE_LENGTH (752)
+    byte[] input = new byte[32 + 2 + 753 + FNDSA512.PUBLIC_KEY_LENGTH];
     input[32] = 0x02;   // high byte
     input[33] = (byte) 0xF1; // low byte → 0x02F1 = 753
     Pair<Boolean, byte[]> result =
@@ -156,7 +156,7 @@ public class FnDsaPrecompileTest {
 
   @Test
   public void sigLenLargerThanActualData_returnsZero() {
-    FNDSA key = new FNDSA();
+    FNDSA512 key = new FNDSA512();
     byte[] sig = key.sign(MESSAGE_HASH);
     // claim sig is 100 bytes longer than it is
     byte[] input = buildInput(MESSAGE_HASH, sig, key.getPublicKey());
@@ -167,6 +167,23 @@ public class FnDsaPrecompileTest {
 
     Pair<Boolean, byte[]> result =
         PrecompiledContracts.getContractForAddress(FNDSA_ADDR).execute(input);
+
+    Assert.assertTrue(result.getLeft());
+    Assert.assertArrayEquals(DataWord.ZERO().getData(), result.getRight());
+  }
+
+  @Test
+  public void trailingBytes_returnsZero() {
+    // Strict equality (matches 0x100 P256Verify / EIP-7951): appending even one byte
+    // to an otherwise-valid input must be rejected to prevent non-canonical encodings.
+    FNDSA512 key = new FNDSA512();
+    byte[] sig = key.sign(MESSAGE_HASH);
+    byte[] valid = buildInput(MESSAGE_HASH, sig, key.getPublicKey());
+    byte[] padded = new byte[valid.length + 1];
+    System.arraycopy(valid, 0, padded, 0, valid.length);
+
+    Pair<Boolean, byte[]> result =
+        PrecompiledContracts.getContractForAddress(FNDSA_ADDR).execute(padded);
 
     Assert.assertTrue(result.getLeft());
     Assert.assertArrayEquals(DataWord.ZERO().getData(), result.getRight());

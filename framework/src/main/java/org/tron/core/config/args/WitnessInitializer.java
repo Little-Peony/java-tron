@@ -128,6 +128,16 @@ public class WitnessInitializer {
           "PQ public keys must be set for PQ-only witness nodes",
           TronError.ErrCode.WITNESS_INIT);
     }
+    if (pqPrivateKeys == null || pqPrivateKeys.isEmpty()) {
+      throw new TronError(
+          "PQ private keys must be set for PQ-only witness nodes",
+          TronError.ErrCode.WITNESS_INIT);
+    }
+    if (pqPrivateKeys.size() != pqPublicKeys.size()) {
+      throw new TronError(
+          "PQ private/public key count mismatch",
+          TronError.ErrCode.WITNESS_INIT);
+    }
     LocalWitnesses witnesses = new LocalWitnesses();
     witnesses.setPqScheme(scheme);
     witnesses.setPqKeypairs(pqPrivateKeys, pqPublicKeys);
@@ -138,6 +148,11 @@ public class WitnessInitializer {
       address = PQSchemeRegistry.computeAddress(scheme, firstPubKey);
       logger.debug("Derived PQ-only witness address from public key");
     } else {
+      if (pqPublicKeys.size() != 1) {
+        throw new TronError(
+            "LocalWitnessAccountAddress can only be set when there is only one PQ keypair",
+            TronError.ErrCode.WITNESS_INIT);
+      }
       address = Commons.decodeFromBase58Check(witnessAccountAddress);
       if (address == null) {
         throw new TronError(
@@ -146,7 +161,7 @@ public class WitnessInitializer {
       }
       logger.debug("Got localWitnessAccountAddress from config.conf");
     }
-    witnesses.initWitnessAccountAddress(address, false);
+    witnesses.setWitnessAccountAddress(address);
     return witnesses;
   }
 

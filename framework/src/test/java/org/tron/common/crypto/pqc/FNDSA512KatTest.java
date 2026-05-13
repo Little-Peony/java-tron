@@ -29,7 +29,7 @@ import org.tron.protos.Protocol.PQScheme;
  * verify is exercised per-vector and cross-vector to confirm signatures only
  * verify under their own key.
  */
-public class FNDSAKatTest {
+public class FNDSA512KatTest {
 
   private static final class KatVector {
     final String label;
@@ -46,7 +46,7 @@ public class FNDSAKatTest {
   }
 
   private static byte[] seedIncrementing() {
-    byte[] s = new byte[FNDSA.SEED_LENGTH];
+    byte[] s = new byte[FNDSA512.SEED_LENGTH];
     for (int i = 0; i < s.length; i++) {
       s[i] = (byte) i;
     }
@@ -54,15 +54,15 @@ public class FNDSAKatTest {
   }
 
   private static byte[] seedDescending() {
-    byte[] s = new byte[FNDSA.SEED_LENGTH];
+    byte[] s = new byte[FNDSA512.SEED_LENGTH];
     for (int i = 0; i < s.length; i++) {
-      s[i] = (byte) (FNDSA.SEED_LENGTH - 1 - i);
+      s[i] = (byte) (FNDSA512.SEED_LENGTH - 1 - i);
     }
     return s;
   }
 
   private static byte[] seedFilled(int b) {
-    byte[] s = new byte[FNDSA.SEED_LENGTH];
+    byte[] s = new byte[FNDSA512.SEED_LENGTH];
     Arrays.fill(s, (byte) b);
     return s;
   }
@@ -104,11 +104,11 @@ public class FNDSAKatTest {
   @Test
   public void allVectorsDeriveExpectedPublicAndPrivateKey() {
     for (KatVector v : VECTORS) {
-      FNDSA k = new FNDSA(v.seed);
+      FNDSA512 k = new FNDSA512(v.seed);
       assertEquals(v.label + ": pk length",
-          FNDSA.PUBLIC_KEY_LENGTH, k.getPublicKey().length);
+          FNDSA512.PUBLIC_KEY_LENGTH, k.getPublicKey().length);
       assertEquals(v.label + ": sk length",
-          FNDSA.PRIVATE_KEY_LENGTH, k.getPrivateKey().length);
+          FNDSA512.PRIVATE_KEY_LENGTH, k.getPrivateKey().length);
       assertEquals(v.label + ": pk SHA-256 must match KAT vector",
           v.pkSha256, hex(sha256(k.getPublicKey())));
       assertEquals(v.label + ": sk SHA-256 must match KAT vector",
@@ -119,7 +119,7 @@ public class FNDSAKatTest {
   @Test
   public void allVectorsDeriveExpectedAddress() {
     for (KatVector v : VECTORS) {
-      FNDSA k = new FNDSA(v.seed);
+      FNDSA512 k = new FNDSA512(v.seed);
       byte[] addr = k.getAddress();
       assertEquals(v.label + ": address length",
           21, addr.length);
@@ -134,7 +134,7 @@ public class FNDSAKatTest {
   @Test
   public void addressIsExactly0x41PlusKeccak256RightmostBytesOfPublicKey() {
     for (KatVector v : VECTORS) {
-      FNDSA k = new FNDSA(v.seed);
+      FNDSA512 k = new FNDSA512(v.seed);
       byte[] pk = k.getPublicKey();
       byte[] hash = Hash.sha3(pk);
       byte[] expected = new byte[21];
@@ -148,8 +148,8 @@ public class FNDSAKatTest {
   @Test
   public void allVectorsAreReproducibleAcrossInstances() {
     for (KatVector v : VECTORS) {
-      FNDSA a = new FNDSA(v.seed);
-      FNDSA b = new FNDSA(v.seed);
+      FNDSA512 a = new FNDSA512(v.seed);
+      FNDSA512 b = new FNDSA512(v.seed);
       assertArrayEquals(v.label + ": pk reproducible", a.getPublicKey(), b.getPublicKey());
       assertArrayEquals(v.label + ": sk reproducible", a.getPrivateKey(), b.getPrivateKey());
       assertArrayEquals(v.label + ": addr reproducible", a.getAddress(), b.getAddress());
@@ -164,7 +164,7 @@ public class FNDSAKatTest {
     for (KatVector v : VECTORS) {
       pkDigests.add(v.pkSha256);
       skDigests.add(v.skSha256);
-      addresses.add(hex(new FNDSA(v.seed).getAddress()));
+      addresses.add(hex(new FNDSA512(v.seed).getAddress()));
     }
     assertEquals("KAT pk digests must be pairwise distinct",
         VECTORS.length, pkDigests.size());
@@ -183,15 +183,15 @@ public class FNDSAKatTest {
         new byte[1024],
     };
     for (KatVector v : VECTORS) {
-      FNDSA k = new FNDSA(v.seed);
+      FNDSA512 k = new FNDSA512(v.seed);
       for (byte[] msg : messages) {
         byte[] sig = k.sign(msg);
         assertTrue(v.label + ": signature must be non-empty",
             sig.length > 0);
         assertTrue(v.label + ": signature must respect 752-byte upper bound",
-            sig.length <= FNDSA.SIGNATURE_LENGTH);
+            sig.length <= FNDSA512.SIGNATURE_LENGTH);
         assertTrue(v.label + ": signature must verify under its own pk",
-            FNDSA.verify(k.getPublicKey(), msg, sig));
+            FNDSA512.verify(k.getPublicKey(), msg, sig));
         assertTrue(v.label + ": registry verify must accept own signature",
             PQSchemeRegistry.verify(
                 PQScheme.FN_DSA_512, k.getPublicKey(), msg, sig));
@@ -202,21 +202,21 @@ public class FNDSAKatTest {
   @Test
   public void signatureFromVectorAFailsUnderVectorBPublicKey() {
     byte[] msg = "tron-fn-dsa-kat-cross".getBytes();
-    FNDSA[] keys = new FNDSA[VECTORS.length];
+    FNDSA512[] keys = new FNDSA512[VECTORS.length];
     byte[][] sigs = new byte[VECTORS.length][];
     for (int i = 0; i < VECTORS.length; i++) {
-      keys[i] = new FNDSA(VECTORS[i].seed);
+      keys[i] = new FNDSA512(VECTORS[i].seed);
       sigs[i] = keys[i].sign(msg);
     }
     for (int i = 0; i < VECTORS.length; i++) {
       for (int j = 0; j < VECTORS.length; j++) {
         if (i == j) {
           assertTrue(VECTORS[i].label + ": self-verify must succeed",
-              FNDSA.verify(keys[i].getPublicKey(), msg, sigs[i]));
+              FNDSA512.verify(keys[i].getPublicKey(), msg, sigs[i]));
         } else {
           assertFalse("signature from " + VECTORS[i].label
                   + " must NOT verify under " + VECTORS[j].label,
-              FNDSA.verify(keys[j].getPublicKey(), msg, sigs[i]));
+              FNDSA512.verify(keys[j].getPublicKey(), msg, sigs[i]));
         }
       }
     }
@@ -228,7 +228,7 @@ public class FNDSAKatTest {
     // Re-derive at runtime and confirm they're still pairwise distinct.
     byte[][] pks = new byte[VECTORS.length][];
     for (int i = 0; i < VECTORS.length; i++) {
-      pks[i] = new FNDSA(VECTORS[i].seed).getPublicKey();
+      pks[i] = new FNDSA512(VECTORS[i].seed).getPublicKey();
     }
     for (int i = 0; i < VECTORS.length; i++) {
       for (int j = i + 1; j < VECTORS.length; j++) {

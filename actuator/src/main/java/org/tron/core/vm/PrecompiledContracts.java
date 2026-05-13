@@ -53,7 +53,7 @@ import org.tron.common.crypto.Hash;
 import org.tron.common.crypto.Rsv;
 import org.tron.common.crypto.SignUtils;
 import org.tron.common.crypto.SignatureInterface;
-import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.crypto.zksnark.BN128;
 import org.tron.common.crypto.zksnark.BN128Fp;
@@ -120,10 +120,10 @@ public class PrecompiledContracts {
   private static final Blake2F blake2F = new Blake2F();
   private static final P256Verify p256Verify = new P256Verify();
 
-  private static final VerifyFnDsa verifyFnDsa = new VerifyFnDsa();
-  private static final ValidateMultiSignPQ validateMultiSignPQ =
-      new ValidateMultiSignPQ();
-  private static final BatchValidateSignPQ batchValidateSignPQ = new BatchValidateSignPQ();
+  private static final VerifyFnDsa512 verifyFnDsa512 = new VerifyFnDsa512();
+  private static final ValidateMultiFnDsa512 validateMultiFnDsa512 =
+      new ValidateMultiFnDsa512();
+  private static final BatchValidateFnDsa512 batchValidateFnDsa512 = new BatchValidateFnDsa512();
 
   // FreezeV2 PrecompileContracts
   private static final GetChainParameter getChainParameter = new GetChainParameter();
@@ -223,19 +223,19 @@ public class PrecompiledContracts {
   // EIP-8052 0x16: FN-DSA / Falcon-512 verify (FIPS-206 draft). Input layout:
   // [msg 32B | sig_len 2B (big-endian) | sig sig_len B (1..752) | pk 896B].
   // Variable-length signature is prefixed with a 2-byte length field.
-  private static final DataWord verifyFnDsaAddr = new DataWord(
+  private static final DataWord verifyFnDsa512Addr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000016");
 
   // 0x17: algorithm-agnostic Permission multi-sign — accepts both ECDSA and
   // Falcon-512 signatures against the same Permission.keys[] in one call,
   // matching transaction-side §2.3.5 mixed-weight semantics.
-  private static final DataWord validateMultiSignPQAddr = new DataWord(
+  private static final DataWord validateMultiFnDsa512Addr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000017");
 
   // 0x18: batch independent Falcon-512 verify — bitmap of (sig, pk, addr)
   // matches; mixed-algorithm contracts call 0x0A and 0x18 separately and OR
   // the bitmaps client-side.
-  private static final DataWord batchValidateSignPqAddr = new DataWord(
+  private static final DataWord batchValidateFnDsa512Addr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000018");
 
   public static PrecompiledContract getOptimizedContractForConstant(PrecompiledContract contract) {
@@ -323,16 +323,18 @@ public class PrecompiledContracts {
       return p256Verify;
     }
 
-    if (VMConfig.allowFnDsa512() && address.equals(verifyFnDsaAddr)) {
-      return verifyFnDsa;
-    }
-
-    if (VMConfig.allowFnDsa512() && address.equals(validateMultiSignPQAddr)) {
-      return validateMultiSignPQ;
-    }
-
-    if (VMConfig.allowFnDsa512() && address.equals(batchValidateSignPqAddr)) {
-      return batchValidateSignPQ;
+    // FN-DSA-512 is the first PQ signature scheme supported by TRON, so its proposal flag
+    // gates every PQ-related precompile (single verify, multisig verify, batch verify).
+    if (VMConfig.allowFnDsa512()) {
+      if (address.equals(verifyFnDsa512Addr)) {
+        return verifyFnDsa512;
+      }
+      if (address.equals(validateMultiFnDsa512Addr)) {
+        return validateMultiFnDsa512;
+      }
+      if (address.equals(batchValidateFnDsa512Addr)) {
+        return batchValidateFnDsa512;
+      }
     }
 
     if (VMConfig.allowTvmFreezeV2()) {
@@ -473,6 +475,35 @@ public class PrecompiledContracts {
     }
     long tail = subtractExact(data.length, multiplyExact(headerWords, WORD_SIZE));
     return tail > 0 && tail % multiplyExact(itemWords, WORD_SIZE) == 0;
+  }
+
+  /**
+   * Structural pre-check for ABI head: word-aligned length and room for the
+   * fixed head. The PQ precompiles cannot reuse {@link #isValidAbiEncoding}
+   * because their {@code bytes[]} entries (PQ signatures, 1..752 bytes) are
+   * variable-length, so the trailing divisibility check does not apply.
+   */
+  private static boolean isValidAbiHead(byte[] data, int headWords) {
+    return data != null
+        && data.length % WORD_SIZE == 0
+        && data.length >= multiplyExact(headWords, WORD_SIZE);
+  }
+
+  /**
+   * Verifies that the array offset stored at {@code words[offsetWordIndex]} is
+   * word-aligned, falls inside the dynamic data region (≥ head), and points to
+   * a length word that still fits inside {@code words}. Sister check to
+   * {@link #isValidAbiEncoding} for ABIs whose items are not uniform width.
+   */
+  private static boolean isValidArrayOffset(DataWord[] words, int offsetWordIndex,
+      int headWords) {
+    long offsetBytes = words[offsetWordIndex].longValueSafe();
+    if (offsetBytes < (long) headWords * WORD_SIZE
+        || offsetBytes % WORD_SIZE != 0) {
+      return false;
+    }
+    long lengthWordIdx = offsetBytes / WORD_SIZE;
+    return lengthWordIdx < words.length;
   }
 
   public abstract static class PrecompiledContract {
@@ -2425,22 +2456,23 @@ public class PrecompiledContracts {
    * <pre>
    *   [msg 32B | sig_len 2B (big-endian, 1..752) | sig sig_len B | pk 896B]
    * </pre>
-   * Minimum input: 32 + 2 + 1 + 896 = 931 bytes.
+   * Total length must equal exactly {@code 32 + 2 + sig_len + 896} (no trailing
+   * bytes; matches 0x100 P256Verify / EIP-7951 strictness).
    *
    * <p>Returns a 32-byte word: 1 on valid signature, 0 otherwise.
    * Malformed input (wrong lengths, out-of-range sig_len) returns 0 without error.
    */
-  public static class VerifyFnDsa extends PrecompiledContract {
+  public static class VerifyFnDsa512 extends PrecompiledContract {
 
     private static final int MSG_LEN = 32;
     private static final int SIG_LEN_FIELD = 2;
-    private static final int PK_LEN = FNDSA.PUBLIC_KEY_LENGTH;
-    private static final int MAX_SIG_LEN = FNDSA.SIGNATURE_LENGTH;
+    private static final int PK_LEN = FNDSA512.PUBLIC_KEY_LENGTH;
+    private static final int MAX_SIG_LEN = FNDSA512.SIGNATURE_LENGTH;
     private static final int MIN_INPUT_LEN = MSG_LEN + SIG_LEN_FIELD + 1 + PK_LEN;
 
     @Override
     public long getEnergyForData(byte[] data) {
-      return 2500;
+      return 4000;
     }
 
     @Override
@@ -2455,14 +2487,17 @@ public class PrecompiledContracts {
           return Pair.of(true, DataWord.ZERO().getData());
         }
         int pkOffset = MSG_LEN + SIG_LEN_FIELD + sigLen;
-        if (data.length < pkOffset + PK_LEN) {
+        // Strict equality (cf. 0x100 P256Verify): one logical input ↔ one encoding,
+        // leaves room for future EIP-8052 trailing fields.
+        if (data.length != pkOffset + PK_LEN) {
           return Pair.of(true, DataWord.ZERO().getData());
         }
         byte[] sig = copyOfRange(data, MSG_LEN + SIG_LEN_FIELD, pkOffset);
         byte[] pk = copyOfRange(data, pkOffset, pkOffset + PK_LEN);
-        boolean ok = FNDSA.verify(pk, msg, sig);
+        boolean ok = FNDSA512.verify(pk, msg, sig);
         return Pair.of(true, ok ? DataWord.ONE().getData() : DataWord.ZERO().getData());
       } catch (Throwable t) {
+        logger.info("VerifyFnDsa512 error:{}", t.getMessage());
         return Pair.of(true, DataWord.ZERO().getData());
       }
     }
@@ -2489,15 +2524,17 @@ public class PrecompiledContracts {
    * </pre>
    *
    * <p>{@code MAX_SIZE = 5} applies to the total signature count
-   * ({@code ecdsaCnt + pqCnt}). Energy is split: {@code ecdsaCnt × 1500 + pqCnt × 15000}.
+   * ({@code ecdsaCnt + pqCnt}). Energy is split: {@code ecdsaCnt × 1500 + pqCnt × 2000}.
    */
-  public static class ValidateMultiSignPQ extends PrecompiledContract {
+  public static class ValidateMultiFnDsa512 extends PrecompiledContract {
 
     private static final int ECDSA_ENERGY_PER_SIGN = 1500;
-    private static final int PQ_ENERGY_PER_SIGN = 15000;
+    private static final int PQ_ENERGY_PER_SIGN = 2000;
     private static final int MAX_SIZE = 5;
-    private static final int PK_LEN = FNDSA.PUBLIC_KEY_LENGTH;
-    private static final int MAX_SIG_LEN = FNDSA.SIGNATURE_LENGTH;
+    private static final int PK_LEN = FNDSA512.PUBLIC_KEY_LENGTH;
+    private static final int MAX_SIG_LEN = FNDSA512.SIGNATURE_LENGTH;
+    // address, permissionId, data, ecdsaOffset, pqSigOffset, pqPkOffset.
+    private static final int ABI_HEAD_WORDS = 6;
 
     @Override
     public long getEnergyForData(byte[] data) {
@@ -2514,8 +2551,16 @@ public class PrecompiledContracts {
 
     @Override
     public Pair<Boolean, byte[]> execute(byte[] rawData) {
+      if (!isValidAbiHead(rawData, ABI_HEAD_WORDS)) {
+        return Pair.of(false, EMPTY_BYTE_ARRAY);
+      }
       try {
         DataWord[] words = DataWord.parseArray(rawData);
+        if (!isValidArrayOffset(words, 3, ABI_HEAD_WORDS)
+            || !isValidArrayOffset(words, 4, ABI_HEAD_WORDS)
+            || !isValidArrayOffset(words, 5, ABI_HEAD_WORDS)) {
+          return Pair.of(false, EMPTY_BYTE_ARRAY);
+        }
         byte[] address = words[0].toTronAddress();
         int permissionId = words[1].intValueSafe();
         byte[] data = words[2].getData();
@@ -2596,7 +2641,7 @@ public class PrecompiledContracts {
           if (weight == 0) {
             return Pair.of(true, DATA_FALSE);
           }
-          if (!FNDSA.verify(pk, hash, sig)) {
+          if (!FNDSA512.verify(pk, hash, sig)) {
             return Pair.of(true, DATA_FALSE);
           }
           totalWeight += weight;
@@ -2617,13 +2662,13 @@ public class PrecompiledContracts {
   }
 
   /**
-   * 0x18 BatchValidateSignPQ — independent per-element Falcon-512 verify.
+   * 0x18 BatchValidateFnDsa512 — independent per-element Falcon-512 verify.
    * <p>Returns a 256-bit bitmap (matching 0x0A) where bit {@code i} is set iff
-   * {@code derive(pk_i) == expectedAddr_i} AND {@code FNDSA.verify(pk_i, hash, sig_i)}.
+   * {@code derive(pk_i) == expectedAddr_i} AND {@code FNDSA512.verify(pk_i, hash, sig_i)}.
    *
    * <p>ABI:
    * <pre>
-   *   batchValidateSignPQ(
+   *   batchValidateFnDsa512(
    *       bytes32   hash,                  // word[0]
    *       bytes[]   signatures,            // word[1] = offset; each 1..752 B
    *       bytes[]   publicKeys,            // word[2] = offset; each 896 B
@@ -2633,14 +2678,16 @@ public class PrecompiledContracts {
    *
    * <p>Reuses the {@code BatchValidateSign.workers} pool when not in a constant
    * call and enforces {@code getCPUTimeLeftInNanoSecond()} timeout. {@code MAX_SIZE = 16}.
-   * Energy is {@code cnt × 15000}.
+   * Energy is {@code cnt × 2000}.
    */
-  public static class BatchValidateSignPQ extends PrecompiledContract {
+  public static class BatchValidateFnDsa512 extends PrecompiledContract {
 
-    private static final int ENERGY_PER_SIGN = 15000;
+    private static final int ENERGY_PER_SIGN = 2000;
     private static final int MAX_SIZE = 16;
-    private static final int PK_LEN = FNDSA.PUBLIC_KEY_LENGTH;
-    private static final int MAX_SIG_LEN = FNDSA.SIGNATURE_LENGTH;
+    private static final int PK_LEN = FNDSA512.PUBLIC_KEY_LENGTH;
+    private static final int MAX_SIG_LEN = FNDSA512.SIGNATURE_LENGTH;
+    // hash, sigArrayOffset, pkArrayOffset, addrArrayOffset.
+    private static final int ABI_HEAD_WORDS = 4;
 
     @Override
     public long getEnergyForData(byte[] data) {
@@ -2670,7 +2717,15 @@ public class PrecompiledContracts {
 
     private Pair<Boolean, byte[]> doExecute(byte[] data)
         throws InterruptedException, ExecutionException {
+      if (!isValidAbiHead(data, ABI_HEAD_WORDS)) {
+        return Pair.of(false, EMPTY_BYTE_ARRAY);
+      }
       DataWord[] words = DataWord.parseArray(data);
+      if (!isValidArrayOffset(words, 1, ABI_HEAD_WORDS)
+          || !isValidArrayOffset(words, 2, ABI_HEAD_WORDS)
+          || !isValidArrayOffset(words, 3, ABI_HEAD_WORDS)) {
+        return Pair.of(false, EMPTY_BYTE_ARRAY);
+      }
       byte[] hash = words[0].getData();
 
       int sigArrayWord = words[1].intValueSafe() / WORD_SIZE;
@@ -2718,8 +2773,8 @@ public class PrecompiledContracts {
             .await(getCPUTimeLeftInNanoSecond(), TimeUnit.NANOSECONDS);
 
         if (!withNoTimeout) {
-          logger.info("BatchValidateSignPQ timeout");
-          throw Program.Exception.notEnoughTime("call BatchValidateSignPQ precompile method");
+          logger.info("BatchValidateFnDsa512 timeout");
+          throw Program.Exception.notEnoughTime("call BatchValidateFnDsa512 precompile method");
         }
 
         for (Future<PqVerifyResult> future : futures) {
@@ -2743,7 +2798,7 @@ public class PrecompiledContracts {
         if (!DataWord.equalAddressByteArray(derived, expectedAddr)) {
           return false;
         }
-        return FNDSA.verify(pk, hash, sig);
+        return FNDSA512.verify(pk, hash, sig);
       } catch (Throwable t) {
         return false;
       }

@@ -35,37 +35,37 @@ public class PQSchemeRegistryTest {
 
   @Test
   public void getSeedLengthReturnsRegisteredValue() {
-    assertEquals(FNDSA.SEED_LENGTH,
+    assertEquals(FNDSA512.SEED_LENGTH,
         PQSchemeRegistry.getSeedLength(PQScheme.FN_DSA_512));
     // UNKNOWN_PQ_SCHEME normalizes to FN_DSA_512.
-    assertEquals(FNDSA.SEED_LENGTH,
+    assertEquals(FNDSA512.SEED_LENGTH,
         PQSchemeRegistry.getSeedLength(PQScheme.UNKNOWN_PQ_SCHEME));
   }
 
   @Test
   public void getPrivateKeyLengthReturnsRegisteredValue() {
-    assertEquals(FNDSA.PRIVATE_KEY_LENGTH,
+    assertEquals(FNDSA512.PRIVATE_KEY_LENGTH,
         PQSchemeRegistry.getPrivateKeyLength(PQScheme.FN_DSA_512));
   }
 
   @Test
   public void fromSeedDispatchesToFalcon() {
-    byte[] seed = new byte[FNDSA.SEED_LENGTH];
+    byte[] seed = new byte[FNDSA512.SEED_LENGTH];
     Arrays.fill(seed, (byte) 0x07);
     PQSignature sig = PQSchemeRegistry.fromSeed(PQScheme.FN_DSA_512, seed);
     assertNotNull(sig);
     assertEquals(PQScheme.FN_DSA_512, sig.getScheme());
     // Same seed must yield deterministic keypair across direct and dispatched paths.
-    FNDSA direct = new FNDSA(seed);
+    FNDSA512 direct = new FNDSA512(seed);
     assertArrayEquals(direct.getPublicKey(), sig.getPublicKey());
     assertArrayEquals(direct.getPrivateKey(), sig.getPrivateKey());
   }
 
   @Test
   public void fromKeypairDispatchesAndPreservesAddress() {
-    byte[] seed = new byte[FNDSA.SEED_LENGTH];
+    byte[] seed = new byte[FNDSA512.SEED_LENGTH];
     Arrays.fill(seed, (byte) 0x09);
-    FNDSA src = new FNDSA(seed);
+    FNDSA512 src = new FNDSA512(seed);
     PQSignature sig = PQSchemeRegistry.fromKeypair(
         PQScheme.FN_DSA_512, src.getPrivateKey(), src.getPublicKey());
     assertArrayEquals(src.getAddress(), sig.getAddress());
@@ -88,7 +88,7 @@ public class PQSchemeRegistryTest {
   public void deriveHashRejectsWrongLengthPublicKey() {
     try {
       PQSchemeRegistry.deriveHash(
-          PQScheme.FN_DSA_512, new byte[FNDSA.PUBLIC_KEY_LENGTH - 1]);
+          PQScheme.FN_DSA_512, new byte[FNDSA512.PUBLIC_KEY_LENGTH - 1]);
       fail("short public key must be rejected");
     } catch (IllegalArgumentException expected) {
       assertTrue(expected.getMessage().contains("public key length"));

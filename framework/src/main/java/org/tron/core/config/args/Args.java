@@ -935,24 +935,35 @@ public class Args extends CommonParameter {
       return;
     }
 
+    LocalWitnessConfig lwConfig = LocalWitnessConfig.fromConfig(config);
+    boolean hasCliPriv = StringUtils.isNotBlank(cmd.privateKey);
+    boolean hasCfgPriv = !lwConfig.getPrivateKeys().isEmpty();
+    boolean hasKeystore = !lwConfig.getKeystores().isEmpty();
+    boolean hasPqKeys = config.hasPath(ConfigKey.LOCAL_WITNESS_PQ_KEYS)
+        && !config.getStringList(ConfigKey.LOCAL_WITNESS_PQ_KEYS).isEmpty();
+    if (hasPqKeys && (hasCliPriv || hasCfgPriv || hasKeystore)) {
+      throw new TronError(
+          "legacy witness keys (CLI --private-key, localwitness, localwitnesskeystore) "
+              + "and " + ConfigKey.LOCAL_WITNESS_PQ_KEYS + " are mutually exclusive",
+          TronError.ErrCode.WITNESS_INIT);
+    }
+
     // path 1: CLI --private-key
-    if (StringUtils.isNotBlank(cmd.privateKey)) {
+    if (hasCliPriv) {
       localWitnesses = WitnessInitializer.initFromCLIPrivateKey(
           cmd.privateKey, cmd.witnessAddress);
       return;
     }
 
-    LocalWitnessConfig lwConfig = LocalWitnessConfig.fromConfig(config);
-
     // path 2: config localwitness (private key list)
-    if (!lwConfig.getPrivateKeys().isEmpty()) {
+    if (hasCfgPriv) {
       localWitnesses = WitnessInitializer.initFromCFGPrivateKey(
           lwConfig.getPrivateKeys(), lwConfig.getAccountAddress());
       return;
     }
 
     // path 3: config localwitnesskeystore + password
-    if (!lwConfig.getKeystores().isEmpty()) {
+    if (hasKeystore) {
       localWitnesses = WitnessInitializer.initFromKeystore(
           lwConfig.getKeystores(), cmd.password, lwConfig.getAccountAddress());
       return;
@@ -988,7 +999,10 @@ public class Args extends CommonParameter {
         List<String> pqPublicKeys = new ArrayList<>(pqEntries.size());
         for (int i = 0; i < pqEntries.size(); i++) {
           String hex = pqEntries.get(i);
-          String stripped = hex != null && hex.startsWith("0x") ? hex.substring(2) : hex;
+          String stripped = hex;
+          if (hex != null && (hex.startsWith("0x") || hex.startsWith("0X"))) {
+            stripped = hex.substring(2);
+          }
           if (stripped == null || stripped.length() != extHexLen) {
             throw new TronError(String.format(
                 "%s[%d] must be %d hex chars (extended priv‖pub for %s), actual: %d",

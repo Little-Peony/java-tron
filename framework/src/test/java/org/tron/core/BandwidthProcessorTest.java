@@ -12,6 +12,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.tron.common.BaseTest;
 import org.tron.common.TestConstants;
+import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.common.runtime.RuntimeImpl;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.capsule.AccountCapsule;
@@ -905,8 +906,8 @@ public class BandwidthProcessorTest extends BaseTest {
         .setAmount(100L)
         .build();
 
-    byte[] fakeSig = new byte[752];
-    byte[] fakePub = new byte[897];
+    byte[] fakeSig = new byte[FNDSA512.SIGNATURE_LENGTH];
+    byte[] fakePub = new byte[FNDSA512.PUBLIC_KEY_LENGTH];
     Protocol.PQAuthSig pqAuthSig = Protocol.PQAuthSig.newBuilder()
         .setScheme(Protocol.PQScheme.FN_DSA_512)
         .setPublicKey(ByteString.copyFrom(fakePub))
@@ -967,8 +968,8 @@ public class BandwidthProcessorTest extends BaseTest {
         .setAmount(100L)
         .build();
 
-    byte[] fakeSig = new byte[752];
-    byte[] fakePub = new byte[897];
+    byte[] fakeSig = new byte[FNDSA512.SIGNATURE_LENGTH];
+    byte[] fakePub = new byte[FNDSA512.PUBLIC_KEY_LENGTH];
     Protocol.PQAuthSig pqAuthSig = Protocol.PQAuthSig.newBuilder()
         .setScheme(Protocol.PQScheme.FN_DSA_512)
         .setPublicKey(ByteString.copyFrom(fakePub))

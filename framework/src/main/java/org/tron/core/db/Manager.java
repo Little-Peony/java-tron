@@ -1760,11 +1760,29 @@ public class Manager {
   }
 
   private void signBlockCapsule(BlockCapsule blockCapsule, Miner miner) {
-    PQScheme scheme = resolveWitnessScheme(miner);
-    if (scheme != null && PQSchemeRegistry.contains(scheme)) {
-      signWitnessAuth(blockCapsule, miner, scheme);
-    } else {
-      blockCapsule.sign(miner.getPrivateKey());
+    switch (miner.getType()) {
+      case PQ:
+        PQScheme scheme = resolveWitnessScheme(miner);
+        if (scheme == null) {
+          // PQ-only miner whose configured scheme is not currently usable
+          // (proposal not activated, scheme allow flag flipped, witness
+          // permission missing, etc.). Surface a clear cause; DposTask's
+          // Throwable handler will log and the witness will miss this slot,
+          // but the producer thread keeps running.
+          throw new IllegalStateException(
+              "PQ-only miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
+                  + " has scheme " + miner.getPqScheme()
+                  + " configured but it is not currently usable "
+                  + "(scheme not allowed by dynamic properties, "
+                  + "or witness permission is missing/empty)");
+        }
+        signWitnessAuth(blockCapsule, miner, scheme);
+        break;
+      case ECDSA:
+        blockCapsule.sign(miner.getPrivateKey());
+        break;
+      default:
+        throw new IllegalStateException("unknown miner type: " + miner.getType());
     }
   }
 
@@ -1796,8 +1814,9 @@ public class Manager {
     byte[] pqPublicKey = miner.getPQPublicKey();
     if (pqPrivateKey == null || pqPublicKey == null) {
       throw new IllegalStateException(
-          "witness permission requires " + scheme
-              + " but local PQ key material is not configured");
+          "miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
+              + " has scheme " + scheme
+              + " set but local PQ key material is missing");
     }
     byte[] digest = blockCapsule.getRawHashBytes();
     byte[] signature = PQSchemeRegistry.sign(scheme, pqPrivateKey, digest);

@@ -794,7 +794,8 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
         if (!ArrayUtils.isEmpty(owner)) { //transfer from transparent address
           validatePubSignature(accountStore, dynamicPropertiesStore);
         } else { //transfer from shielded address
-          if (this.transaction.getSignatureCount() > 0) {
+          if (this.transaction.getSignatureCount() > 0
+              || this.transaction.getPqAuthSigCount() > 0) {
             throw new ValidateSignatureException("there should be no signatures signed by "
                     + "transparent address when transfer from shielded address");
           }

@@ -58,6 +58,11 @@ public class ConsensusService {
               + " private vs " + pqPublicKeys.size() + " public",
           TronError.ErrCode.WITNESS_INIT);
     }
+    if (!privateKeys.isEmpty() && !pqPrivateKeys.isEmpty()) {
+      throw new TronError(
+          "legacy localwitness keys and localwitness_pq_keys are mutually exclusive",
+          TronError.ErrCode.WITNESS_INIT);
+    }
     if (privateKeys.size() > 1) {
       for (String key : privateKeys) {
         byte[] privateKey = fromHexString(key);
@@ -107,6 +112,7 @@ public class ConsensusService {
         miner.setPQPrivateKey(sk);
         miner.setPQPublicKey(pk);
         miner.setPqScheme(scheme);
+        miner.setType(Param.MinerType.PQ);
         miners.add(miner);
         logger.info("Add {} witness (from configured keypair): {}, size: {}",
             scheme, Hex.toHexString(pqAddress), miners.size());
@@ -146,6 +152,7 @@ public class ConsensusService {
     miner.setPQPrivateKey(sk);
     miner.setPQPublicKey(pk);
     miner.setPqScheme(scheme);
+    miner.setType(Param.MinerType.PQ);
     logger.info("Add {} witness (from configured keypair): {}",
         scheme, Hex.toHexString(witnessAddress));
     return miner;

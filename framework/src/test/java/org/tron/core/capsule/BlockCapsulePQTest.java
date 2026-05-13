@@ -8,7 +8,7 @@ import org.junit.Test;
 import org.tron.common.BaseTest;
 import org.tron.common.TestConstants;
 import org.tron.common.crypto.ECKey;
-import org.tron.common.crypto.pqc.FNDSA;
+import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.config.args.Args;
@@ -25,7 +25,7 @@ public class BlockCapsulePQTest extends BaseTest {
 
   private ECKey witnessKey;
   private byte[] witnessAddress;
-  private FNDSA pqKeypair;
+  private FNDSA512 pqKeypair;
   private byte[] pqAddress;
 
   @BeforeClass
@@ -37,7 +37,7 @@ public class BlockCapsulePQTest extends BaseTest {
   public void setUp() {
     witnessKey = new ECKey();
     witnessAddress = witnessKey.getAddress();
-    pqKeypair = new FNDSA();
+    pqKeypair = new FNDSA512();
     pqAddress = PQSchemeRegistry.computeAddress(
         PQScheme.FN_DSA_512, pqKeypair.getPublicKey());
   }
@@ -89,7 +89,7 @@ public class BlockCapsulePQTest extends BaseTest {
   }
 
   private byte[] signPQ(byte[] message) {
-    return FNDSA.sign(pqKeypair.getPrivateKey(), message);
+    return FNDSA512.sign(pqKeypair.getPrivateKey(), message);
   }
 
   private PQAuthSig buildPQAuthSig(byte[] signature) {
@@ -154,6 +154,28 @@ public class BlockCapsulePQTest extends BaseTest {
     BlockCapsule block = buildUnsignedBlock(parentHash);
     byte[] digest = block.getRawHashBytes();
     block.setPqAuthSig(buildPQAuthSig(signPQ(digest)));
+    Assert.assertTrue(block.validateSignature(
+        dbManager.getDynamicPropertiesStore(), dbManager.getAccountStore()));
+  }
+
+  @Test
+  public void pqAuthSigWithDefaultSchemeAcceptedAsFnDsa512() throws Exception {
+    dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1L);
+    dbManager.getDynamicPropertiesStore().saveAllowFnDsa512(1L);
+    AccountCapsule witness = buildWitnessAccount(pqAddress);
+    dbManager.getAccountStore().put(witnessAddress, witness);
+
+    byte[] parentHash = new byte[32];
+    BlockCapsule block = buildUnsignedBlock(parentHash);
+    byte[] digest = block.getRawHashBytes();
+    // Omit setScheme(...) so the field stays at the proto3 default
+    // UNKNOWN_PQ_SCHEME; PQSchemeRegistry#resolve normalizes it to FN_DSA_512.
+    PQAuthSig defaultScheme = PQAuthSig.newBuilder()
+        .setPublicKey(ByteString.copyFrom(pqKeypair.getPublicKey()))
+        .setSignature(ByteString.copyFrom(signPQ(digest)))
+        .build();
+    Assert.assertEquals(PQScheme.UNKNOWN_PQ_SCHEME, defaultScheme.getScheme());
+    block.setPqAuthSig(defaultScheme);
     Assert.assertTrue(block.validateSignature(
         dbManager.getDynamicPropertiesStore(), dbManager.getAccountStore()));
   }
