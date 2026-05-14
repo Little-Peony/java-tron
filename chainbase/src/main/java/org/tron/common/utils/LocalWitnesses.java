@@ -142,12 +142,11 @@ public class LocalWitnesses {
    */
   public void setPqKeypairs(final List<String> pqPrivateKeys,
       final List<String> pqPublicKeys) {
-    if (CollectionUtils.isEmpty(pqPrivateKeys)
-        && CollectionUtils.isEmpty(pqPublicKeys)) {
+    int privCount = CollectionUtils.isEmpty(pqPrivateKeys) ? 0 : pqPrivateKeys.size();
+    int pubCount = CollectionUtils.isEmpty(pqPublicKeys) ? 0 : pqPublicKeys.size();
+    if (privCount == 0 && pubCount == 0) {
       return;
     }
-    int privCount = pqPrivateKeys == null ? 0 : pqPrivateKeys.size();
-    int pubCount = pqPublicKeys == null ? 0 : pqPublicKeys.size();
     if (privCount != pubCount) {
       throw new TronError(String.format(
           "PQ keypair list size mismatch: priv=%d, pub=%d", privCount, pubCount),

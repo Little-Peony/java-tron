@@ -2497,7 +2497,6 @@ public class PrecompiledContracts {
         boolean ok = FNDSA512.verify(pk, msg, sig);
         return Pair.of(true, ok ? DataWord.ONE().getData() : DataWord.ZERO().getData());
       } catch (Throwable t) {
-        logger.info("VerifyFnDsa512 error:{}", t.getMessage());
         return Pair.of(true, DataWord.ZERO().getData());
       }
     }
@@ -2655,7 +2654,6 @@ public class PrecompiledContracts {
         if (t instanceof OutOfTimeException) {
           throw t;
         }
-        logger.info("ValidateMultiSign(0x17) error:{}", t.getMessage());
       }
       return Pair.of(true, DATA_FALSE);
     }
