@@ -32,6 +32,7 @@ import org.tron.consensus.pbft.message.PbftBaseMessage;
 import org.tron.consensus.pbft.message.PbftMessage;
 import org.tron.core.ChainBaseManager;
 import org.tron.protos.Protocol.PBFTMessage.DataType;
+import org.tron.protos.Protocol.PQAuthSig;
 
 @Slf4j(topic = "pbft")
 @Component
@@ -60,6 +61,15 @@ public class PbftMessageHandle {
           new CacheLoader<String, List<ByteString>>() {
             @Override
             public List<ByteString> load(String s) throws Exception {
+              return new ArrayList<>();
+            }
+          });
+
+  private LoadingCache<String, List<PQAuthSig>> pqSignCache = CacheBuilder.newBuilder()
+      .initialCapacity(100).maximumSize(1000).expireAfterWrite(2, TimeUnit.MINUTES).build(
+          new CacheLoader<String, List<PQAuthSig>>() {
+            @Override
+            public List<PQAuthSig> load(String s) throws Exception {
               return new ArrayList<>();
             }
           });
@@ -205,14 +215,21 @@ public class PbftMessageHandle {
     commitVoteMap.put(key, message);
     //The number of votes plus 1
     long agCou = agreeCommit.incrementAndGet(message.getDataKey());
-    dataSignCache.getUnchecked(message.getDataKey())
-        .add(message.getPbftMessage().getSignature());
+    if (message.getPbftMessage().hasPqAuthSig()) {
+      pqSignCache.getUnchecked(message.getDataKey())
+          .add(message.getPbftMessage().getPqAuthSig());
+    } else {
+      dataSignCache.getUnchecked(message.getDataKey())
+          .add(message.getPbftMessage().getSignature());
+    }
     if (agCou >= Param.getInstance().getAgreeNodeCount()) {
       srPbftMessage = null;
       remove(message.getNo());
       //commit,
       if (!isSyncing()) {
-        pbftMessageAction.action(message, dataSignCache.getUnchecked(message.getDataKey()));
+        pbftMessageAction.action(message,
+            dataSignCache.getUnchecked(message.getDataKey()),
+            pqSignCache.getUnchecked(message.getDataKey()));
       }
     }
   }

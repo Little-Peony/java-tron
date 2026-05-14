@@ -19,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.tron.common.crypto.ECKey;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
@@ -33,6 +34,8 @@ import org.tron.core.net.message.pbft.PbftCommitMessage;
 import org.tron.core.net.peer.PeerConnection;
 import org.tron.protos.Protocol.PBFTMessage.DataType;
 import org.tron.protos.Protocol.PBFTMessage.Raw;
+import org.tron.protos.Protocol.PQAuthSig;
+import org.tron.protos.Protocol.PQScheme;
 
 @Slf4j(topic = "pbft-data-sync")
 @Service
@@ -102,6 +105,7 @@ public class PbftDataSyncHandler implements TronMsgHandler, Closeable {
       PbftSignDataStore pbftSignDataStore = chainBaseManager.getPbftSignDataStore();
       Raw raw = Raw.parseFrom(pbftCommitMessage.getPBFTCommitResult().getData());
       if (!validPbftSign(raw, pbftCommitMessage.getPBFTCommitResult().getSignatureList(),
+          pbftCommitMessage.getPBFTCommitResult().getPqSignatureList(),
           chainBaseManager.getWitnesses())) {
         return;
       }
@@ -120,37 +124,44 @@ public class PbftDataSyncHandler implements TronMsgHandler, Closeable {
   }
 
   private boolean validPbftSign(Raw raw, List<ByteString> srSignList,
-      List<ByteString> currentSrList) {
-    //valid sr list
-    if (srSignList.size() != 0) {
-      Set<ByteString> srSignSet = new ConcurrentSet();
-      srSignSet.addAll(srSignList);
-      if (srSignSet.size() < Param.getInstance().getAgreeNodeCount()) {
-        logger.error("sr sign count {} < sr count * 2/3 + 1 == {}", srSignSet.size(),
-            Param.getInstance().getAgreeNodeCount());
-        return false;
-      }
-      byte[] dataHash = Sha256Hash.hash(true, raw.toByteArray());
-      Set<ByteString> srSet = Sets.newHashSet(currentSrList);
-      List<Future<Boolean>> futureList = new ArrayList<>();
-      for (ByteString sign : srSignList) {
-        futureList.add(executorService.submit(
-            new ValidPbftSignTask(raw.getViewN(), srSignSet, dataHash, srSet, sign)));
-      }
-      for (Future<Boolean> future : futureList) {
-        try {
-          if (!future.get()) {
-            return false;
-          }
-        } catch (Exception e) {
-          logger.error("", e);
+      List<PQAuthSig> pqSignList, List<ByteString> currentSrList) {
+    int totalSigs = srSignList.size() + pqSignList.size();
+    if (totalSigs == 0) {
+      return true;
+    }
+    Set<ByteString> srSignSet = new ConcurrentSet();
+    srSignSet.addAll(srSignList);
+    Set<ByteString> pqSignSet = new ConcurrentSet();
+    for (PQAuthSig pqSign : pqSignList) {
+      pqSignSet.add(pqSign.toByteString());
+    }
+    int uniqueSigs = srSignSet.size() + pqSignSet.size();
+    if (uniqueSigs < Param.getInstance().getAgreeNodeCount()) {
+      logger.error("sr sign count {} < sr count * 2/3 + 1 == {}", uniqueSigs,
+          Param.getInstance().getAgreeNodeCount());
+      return false;
+    }
+    byte[] dataHash = Sha256Hash.hash(true, raw.toByteArray());
+    Set<ByteString> srSet = Sets.newHashSet(currentSrList);
+    List<Future<Boolean>> futureList = new ArrayList<>();
+    for (ByteString sign : srSignList) {
+      futureList.add(executorService.submit(
+          new ValidPbftSignTask(raw.getViewN(), srSignSet, dataHash, srSet, sign)));
+    }
+    for (PQAuthSig pqSign : pqSignList) {
+      futureList.add(executorService.submit(
+          new ValidPqPbftSignTask(raw.getViewN(), pqSignSet, dataHash, srSet, pqSign)));
+    }
+    for (Future<Boolean> future : futureList) {
+      try {
+        if (!future.get()) {
+          return false;
         }
-      }
-      if (srSignSet.size() != 0) {
-        return false;
+      } catch (Exception e) {
+        logger.error("", e);
       }
     }
-    return true;
+    return srSignSet.isEmpty() && pqSignSet.isEmpty();
   }
 
   private class ValidPbftSignTask implements Callable<Boolean> {
@@ -185,6 +196,59 @@ public class PbftDataSyncHandler implements TronMsgHandler, Closeable {
         logger.error("viewN {} valid sr list sign fail!", viewN, e);
         return false;
       }
+      return true;
+    }
+  }
+
+  private class ValidPqPbftSignTask implements Callable<Boolean> {
+
+    private final long viewN;
+    private final Set<ByteString> pqSignSet;
+    private final byte[] dataHash;
+    private final Set<ByteString> srSet;
+    private final PQAuthSig pqAuthSig;
+
+    ValidPqPbftSignTask(long viewN, Set<ByteString> pqSignSet,
+        byte[] dataHash, Set<ByteString> srSet, PQAuthSig pqAuthSig) {
+      this.viewN = viewN;
+      this.pqSignSet = pqSignSet;
+      this.dataHash = dataHash;
+      this.srSet = srSet;
+      this.pqAuthSig = pqAuthSig;
+    }
+
+    @Override
+    public Boolean call() {
+      PQScheme scheme = pqAuthSig.getScheme();
+      if (!chainBaseManager.getDynamicPropertiesStore().isPqSchemeAllowed(scheme)) {
+        logger.error("viewN {} pq scheme {} not activated on chain", viewN, scheme);
+        return false;
+      }
+      if (!PQSchemeRegistry.contains(scheme)) {
+        logger.error("viewN {} pq scheme {} not registered locally", viewN, scheme);
+        return false;
+      }
+      byte[] publicKey = pqAuthSig.getPublicKey().toByteArray();
+      if (publicKey.length != PQSchemeRegistry.getPublicKeyLength(scheme)) {
+        logger.error("viewN {} pq public key length mismatch for {}", viewN, scheme);
+        return false;
+      }
+      byte[] signature = pqAuthSig.getSignature().toByteArray();
+      if (!PQSchemeRegistry.isValidSignatureLength(scheme, signature.length)) {
+        logger.error("viewN {} pq signature length mismatch for {}", viewN, scheme);
+        return false;
+      }
+      if (!PQSchemeRegistry.verify(scheme, publicKey, dataHash, signature)) {
+        logger.error("viewN {} pq signature verification failed for {}", viewN, scheme);
+        return false;
+      }
+      byte[] srAddress = PQSchemeRegistry.computeAddress(scheme, publicKey);
+      if (!srSet.contains(ByteString.copyFrom(srAddress))) {
+        logger.error("valid sr pq signature fail, error sr address:{}",
+            ByteArray.toHexString(srAddress));
+        return false;
+      }
+      pqSignSet.remove(pqAuthSig.toByteString());
       return true;
     }
   }
