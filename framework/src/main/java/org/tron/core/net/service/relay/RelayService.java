@@ -17,10 +17,12 @@ import org.tron.common.backup.BackupManager;
 import org.tron.common.backup.BackupManager.BackupStatusEnum;
 import org.tron.common.crypto.SignInterface;
 import org.tron.common.crypto.SignUtils;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.log.layout.DesensitizedConverter;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
+import org.tron.common.utils.LocalWitnesses;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.TransactionCapsule;
@@ -35,6 +37,8 @@ import org.tron.core.net.peer.PeerConnection;
 import org.tron.core.store.WitnessScheduleStore;
 import org.tron.p2p.connection.Channel;
 import org.tron.protos.Protocol;
+import org.tron.protos.Protocol.PQAuthSig;
+import org.tron.protos.Protocol.PQScheme;
 import org.tron.protos.Protocol.ReasonCode;
 
 @Slf4j(topic = "net")
@@ -68,6 +72,8 @@ public class RelayService {
 
   private final int keySize = Args.getLocalWitnesses().getPrivateKeys().size();
 
+  private final int pqKeySize = Args.getLocalWitnesses().getPqPrivateKeys().size();
+
   private final ByteString witnessAddress =
       Args.getLocalWitnesses().getWitnessAccountAddress() != null ? ByteString
           .copyFrom(Args.getLocalWitnesses().getWitnessAccountAddress()) : null;
@@ -79,10 +85,12 @@ public class RelayService {
     witnessScheduleStore = ctx.getBean(WitnessScheduleStore.class);
     backupManager = ctx.getBean(BackupManager.class);
 
-    logger.info("Fast forward config, isWitness: {}, keySize: {}, fastForwardNodes: {}",
-        parameter.isWitness(), keySize, fastForwardNodes.size());
+    logger.info(
+        "Fast forward config, isWitness: {}, keySize: {}, pqKeySize: {}, fastForwardNodes: {}",
+        parameter.isWitness(), keySize, pqKeySize, fastForwardNodes.size());
 
-    if (!parameter.isWitness() || keySize == 0 || fastForwardNodes.isEmpty()) {
+    if (!parameter.isWitness() || (keySize == 0 && pqKeySize == 0)
+        || fastForwardNodes.isEmpty()) {
       return;
     }
 
@@ -105,22 +113,39 @@ public class RelayService {
   }
 
   public void fillHelloMessage(HelloMessage message, Channel channel) {
-    if (isActiveWitness()) {
-      fastForwardNodes.forEach(address -> {
-        if (address.getAddress().equals(channel.getInetAddress())) {
-          SignInterface cryptoEngine = SignUtils
-              .fromPrivate(ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()),
-                  Args.getInstance().isECKeyCryptoEngine());
-
-          ByteString sig = ByteString.copyFrom(cryptoEngine.Base64toBytes(cryptoEngine
-              .signHash(Sha256Hash.of(CommonParameter.getInstance()
-                  .isECKeyCryptoEngine(), ByteArray.fromLong(message
-                  .getTimestamp())).getBytes())));
-          message.setHelloMessage(message.getHelloMessage().toBuilder()
-              .setAddress(witnessAddress).setSignature(sig).build());
-        }
-      });
+    if (!isActiveWitness()) {
+      return;
     }
+    fastForwardNodes.forEach(address -> {
+      if (!address.getAddress().equals(channel.getInetAddress())) {
+        return;
+      }
+      byte[] digest = Sha256Hash.of(CommonParameter.getInstance()
+          .isECKeyCryptoEngine(), ByteArray.fromLong(message.getTimestamp()))
+          .getBytes();
+      Protocol.HelloMessage.Builder builder = message.getHelloMessage().toBuilder()
+          .setAddress(witnessAddress);
+      if (keySize > 0) {
+        SignInterface cryptoEngine = SignUtils.fromPrivate(
+            ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()),
+            Args.getInstance().isECKeyCryptoEngine());
+        ByteString sig = ByteString.copyFrom(
+            cryptoEngine.Base64toBytes(cryptoEngine.signHash(digest)));
+        builder.setSignature(sig).clearPqAuthSig();
+      } else {
+        LocalWitnesses lw = Args.getLocalWitnesses();
+        PQScheme scheme = lw.getPqScheme();
+        byte[] privKey = ByteArray.fromHexString(lw.getPqPrivateKeys().get(0));
+        byte[] pubKey = ByteArray.fromHexString(lw.getPqPublicKeys().get(0));
+        byte[] sig = PQSchemeRegistry.sign(scheme, privKey, digest);
+        builder.setPqAuthSig(PQAuthSig.newBuilder()
+            .setScheme(scheme)
+            .setPublicKey(ByteString.copyFrom(pubKey))
+            .setSignature(ByteString.copyFrom(sig)))
+            .clearSignature();
+      }
+      message.setHelloMessage(builder.build());
+    });
   }
 
   public boolean checkHelloMessage(HelloMessage message, Channel channel) {
@@ -150,20 +175,22 @@ public class RelayService {
       return false;
     }
 
+    boolean hasLegacy = !msg.getSignature().isEmpty();
+    boolean hasPq = msg.hasPqAuthSig();
+    if (hasLegacy == hasPq) {
+      logger.warn("HelloMessage from {}, signature/pq_auth_sig must be set exclusively.",
+          channel.getInetAddress());
+      return false;
+    }
+
     boolean flag;
     try {
-      Sha256Hash hash = Sha256Hash.of(CommonParameter
-          .getInstance().isECKeyCryptoEngine(), ByteArray.fromLong(msg.getTimestamp()));
-      String sig =
-          TransactionCapsule.getBase64FromByteString(msg.getSignature());
-      byte[] sigAddress = SignUtils.signatureToAddress(hash.getBytes(), sig,
-          Args.getInstance().isECKeyCryptoEngine());
-      if (manager.getDynamicPropertiesStore().getAllowMultiSign() != 1) {
-        flag = Arrays.equals(sigAddress, msg.getAddress().toByteArray());
+      byte[] digest = Sha256Hash.of(CommonParameter.getInstance().isECKeyCryptoEngine(),
+          ByteArray.fromLong(msg.getTimestamp())).getBytes();
+      if (hasPq) {
+        flag = verifyPqAuthSig(digest, msg.getPqAuthSig(), msg.getAddress(), channel);
       } else {
-        byte[] witnessPermissionAddress = manager.getAccountStore()
-            .get(msg.getAddress().toByteArray()).getWitnessPermissionAddress();
-        flag = Arrays.equals(sigAddress, witnessPermissionAddress);
+        flag = verifyLegacySignature(digest, msg.getSignature(), msg.getAddress());
       }
       if (flag) {
         TronNetService.getP2pConfig().getTrustNodes().add(channel.getInetAddress());
@@ -177,6 +204,61 @@ public class RelayService {
     }
   }
 
+  private boolean verifyLegacySignature(byte[] digest, ByteString signature,
+      ByteString witnessAddr) throws java.security.SignatureException {
+    String sig = TransactionCapsule.getBase64FromByteString(signature);
+    byte[] sigAddress = SignUtils.signatureToAddress(digest, sig,
+        Args.getInstance().isECKeyCryptoEngine());
+    if (manager.getDynamicPropertiesStore().getAllowMultiSign() != 1) {
+      return Arrays.equals(sigAddress, witnessAddr.toByteArray());
+    }
+    byte[] witnessPermissionAddress = manager.getAccountStore()
+        .get(witnessAddr.toByteArray()).getWitnessPermissionAddress();
+    return Arrays.equals(sigAddress, witnessPermissionAddress);
+  }
+
+  private boolean verifyPqAuthSig(byte[] digest, PQAuthSig pqAuthSig,
+      ByteString witnessAddr, Channel channel) {
+    PQScheme scheme = pqAuthSig.getScheme();
+    if (!PQSchemeRegistry.contains(scheme)) {
+      logger.warn("HelloMessage from {}, pq_auth_sig scheme {} is not registered.",
+          channel.getInetAddress(), scheme);
+      return false;
+    }
+    if (!manager.getDynamicPropertiesStore().isPqSchemeAllowed(scheme)) {
+      logger.warn("HelloMessage from {}, pq_auth_sig scheme {} is not activated on chain.",
+          channel.getInetAddress(), scheme);
+      return false;
+    }
+    byte[] publicKey = pqAuthSig.getPublicKey().toByteArray();
+    if (publicKey.length != PQSchemeRegistry.getPublicKeyLength(scheme)) {
+      logger.warn("HelloMessage from {}, pq_auth_sig public key length mismatch for {}.",
+          channel.getInetAddress(), scheme);
+      return false;
+    }
+    byte[] signature = pqAuthSig.getSignature().toByteArray();
+    if (!PQSchemeRegistry.isValidSignatureLength(scheme, signature.length)) {
+      logger.warn("HelloMessage from {}, pq_auth_sig signature length mismatch for {}.",
+          channel.getInetAddress(), scheme);
+      return false;
+    }
+
+    byte[] derivedAddr = PQSchemeRegistry.computeAddress(scheme, publicKey);
+    byte[] expected;
+    if (manager.getDynamicPropertiesStore().getAllowMultiSign() != 1) {
+      expected = witnessAddr.toByteArray();
+    } else {
+      expected = manager.getAccountStore().get(witnessAddr.toByteArray())
+          .getWitnessPermissionAddress();
+    }
+    if (!Arrays.equals(derivedAddr, expected)) {
+      logger.warn("HelloMessage from {}, pq_auth_sig public key does not bind witness {}.",
+          channel.getInetAddress(), ByteArray.toHexString(witnessAddr.toByteArray()));
+      return false;
+    }
+    return PQSchemeRegistry.verify(scheme, publicKey, digest, signature);
+  }
+
   private long getPeerCountByAddress(ByteString address) {
     return tronNetDelegate.getActivePeer().stream()
       .filter(peer -> peer.getAddress() != null && peer.getAddress().equals(address))
@@ -185,7 +267,7 @@ public class RelayService {
 
   private boolean isActiveWitness() {
     return parameter.isWitness()
-        && keySize > 0
+        && (keySize > 0 || pqKeySize > 0)
         && fastForwardNodes.size() > 0
         && witnessScheduleStore.getActiveWitnesses().contains(witnessAddress)
         && backupManager.getStatus().equals(BackupStatusEnum.MASTER);

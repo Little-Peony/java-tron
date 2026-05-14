@@ -657,10 +657,17 @@ message HelloMessage {
   BlockId solidBlockId = 5;
   BlockId headBlockId = 6;
   bytes address = 7;
+  // Legacy ECDSA signature over Sha256Hash(timestamp). Mutually exclusive
+  // with pq_auth_sig — exactly one of the two must be set by an active
+  // witness when fast-forward is enabled.
   bytes signature = 8;
   int32 nodeType = 9;
   int64 lowestBlockNum = 10;
   bytes codeVersion = 11;
+  // Post-quantum auth signature over Sha256Hash(timestamp). Set instead of
+  // `signature` when the local witness is PQ-only. Verifier only accepts
+  // this field after ALLOW_FN_DSA_512 is activated on chain.
+  PQAuthSig pq_auth_sig = 12;
 }
 
 message InternalTransaction {

@@ -54,13 +54,13 @@ public class ConsensusService {
     List<String> pqPublicKeys = Args.getLocalWitnesses().getPqPublicKeys();
     if (pqPublicKeys.size() != pqPrivateKeys.size()) {
       throw new TronError(
-          "localwitness_pq_keys size mismatch: " + pqPrivateKeys.size()
+          "localwitness_pq.keys size mismatch: " + pqPrivateKeys.size()
               + " private vs " + pqPublicKeys.size() + " public",
           TronError.ErrCode.WITNESS_INIT);
     }
     if (!privateKeys.isEmpty() && !pqPrivateKeys.isEmpty()) {
       throw new TronError(
-          "legacy localwitness keys and localwitness_pq_keys are mutually exclusive",
+          "legacy localwitness keys and localwitness_pq.keys are mutually exclusive",
           TronError.ErrCode.WITNESS_INIT);
     }
     if (privateKeys.size() > 1) {

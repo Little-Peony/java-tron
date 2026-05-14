@@ -94,7 +94,7 @@ public class PQWitnessNode {
     dbDir.deleteOnExit();
 
     // Inject the witness keypair via a temp HOCON config that includes
-    // config-test.conf and overrides localwitness_pq_keys with the extended
+    // config-test.conf and overrides localwitness_pq.keys with the extended
     // priv‖pub hex derived from WITNESS_SEED (matches what PQClient derives).
     Path conf = writeWitnessConfig(witnessKp);
 
@@ -194,10 +194,12 @@ public class PQWitnessNode {
     Path conf = Files.createTempFile("pqc-witness-", ".conf");
     conf.toFile().deleteOnExit();
     String body = "include classpath(\"config-test.conf\")\n"
-        + "localwitness_pq_scheme = \"FN_DSA_512\"\n"
-        + "localwitness_pq_keys = [\n"
-        + "  \"" + Hex.toHexString(witnessKp.getPrivateKeyWithPublicKey()) + "\"\n"
-        + "]\n";
+        + "localwitness_pq = {\n"
+        + "  scheme = \"FN_DSA_512\"\n"
+        + "  keys = [\n"
+        + "    \"" + Hex.toHexString(witnessKp.getPrivateKeyWithPublicKey()) + "\"\n"
+        + "  ]\n"
+        + "}\n";
     Files.write(conf, body.getBytes(StandardCharsets.UTF_8));
     return conf;
   }
