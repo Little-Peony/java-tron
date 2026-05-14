@@ -6,6 +6,7 @@ import java.security.SignatureException;
 import java.util.stream.Collectors;
 import org.bouncycastle.util.encoders.Hex;
 import org.tron.common.crypto.ECKey;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.overlay.message.Message;
 import org.tron.common.utils.ByteUtil;
 import org.tron.common.utils.Sha256Hash;
@@ -14,6 +15,8 @@ import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.exception.P2pException;
 import org.tron.protos.Protocol.PBFTMessage;
 import org.tron.protos.Protocol.PBFTMessage.DataType;
+import org.tron.protos.Protocol.PQAuthSig;
+import org.tron.protos.Protocol.PQScheme;
 import org.tron.protos.Protocol.SRL;
 
 public abstract class PbftBaseMessage extends Message {
@@ -96,8 +99,38 @@ public abstract class PbftBaseMessage extends Message {
 
   public void analyzeSignature() throws SignatureException {
     byte[] hash = Sha256Hash.hash(true, getPbftMessage().getRawData().toByteArray());
-    publicKey = ECKey.signatureToAddress(hash, TransactionCapsule
-        .getBase64FromByteString(getPbftMessage().getSignature()));
+    boolean hasLegacy = !getPbftMessage().getSignature().isEmpty();
+    boolean hasPq = getPbftMessage().hasPqAuthSig();
+    if (hasLegacy == hasPq) {
+      throw new SignatureException(
+          "pbft message must set exactly one of signature / pq_auth_sig");
+    }
+    if (hasPq) {
+      publicKey = verifyPqAuthSig(hash, getPbftMessage().getPqAuthSig());
+    } else {
+      publicKey = ECKey.signatureToAddress(hash, TransactionCapsule
+          .getBase64FromByteString(getPbftMessage().getSignature()));
+    }
+  }
+
+  private static byte[] verifyPqAuthSig(byte[] hash, PQAuthSig pqAuthSig)
+      throws SignatureException {
+    PQScheme scheme = pqAuthSig.getScheme();
+    if (!PQSchemeRegistry.contains(scheme)) {
+      throw new SignatureException("pbft pq_auth_sig scheme not registered: " + scheme);
+    }
+    byte[] publicKey = pqAuthSig.getPublicKey().toByteArray();
+    if (publicKey.length != PQSchemeRegistry.getPublicKeyLength(scheme)) {
+      throw new SignatureException("pbft pq_auth_sig public key length mismatch for " + scheme);
+    }
+    byte[] signature = pqAuthSig.getSignature().toByteArray();
+    if (!PQSchemeRegistry.isValidSignatureLength(scheme, signature.length)) {
+      throw new SignatureException("pbft pq_auth_sig signature length mismatch for " + scheme);
+    }
+    if (!PQSchemeRegistry.verify(scheme, publicKey, hash, signature)) {
+      throw new SignatureException("pbft pq_auth_sig verification failed for " + scheme);
+    }
+    return PQSchemeRegistry.computeAddress(scheme, publicKey);
   }
 
   @Override
