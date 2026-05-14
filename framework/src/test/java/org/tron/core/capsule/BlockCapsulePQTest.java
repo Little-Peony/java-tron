@@ -15,6 +15,8 @@ import org.tron.core.config.args.Args;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.AccountType;
+import org.tron.protos.Protocol.Block;
+import org.tron.protos.Protocol.BlockHeader;
 import org.tron.protos.Protocol.Key;
 import org.tron.protos.Protocol.PQAuthSig;
 import org.tron.protos.Protocol.PQScheme;
@@ -100,6 +102,20 @@ public class BlockCapsulePQTest extends BaseTest {
         .build();
   }
 
+  /**
+   * {@link BlockCapsule#hasWitnessSignature()} is the apply-vs-pack discriminator
+   * in {@code Manager#processTransaction}; a PQ-only block must read as signed so
+   * it follows the same apply/trace-check path as ECDSA blocks.
+   */
+  @Test
+  public void hasWitnessSignatureTrueForPqOnlyBlock() {
+    byte[] parentHash = new byte[32];
+    BlockCapsule block = buildUnsignedBlock(parentHash);
+    Assert.assertFalse(block.hasWitnessSignature());
+    block.setPqAuthSig(buildPQAuthSig(signPQ(block.getRawHashBytes())));
+    Assert.assertTrue(block.hasWitnessSignature());
+  }
+
   @Test
   public void legacyValidateWithoutPQAuthSigAcceptedBeforeActivation() throws Exception {
     dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1L);
@@ -136,9 +152,16 @@ public class BlockCapsulePQTest extends BaseTest {
     dbManager.getAccountStore().put(witnessAddress, witness);
 
     byte[] parentHash = new byte[32];
-    BlockCapsule block = buildSignedBlock(parentHash);
-    byte[] digest = block.getRawHashBytes();
-    block.setPqAuthSig(buildPQAuthSig(signPQ(digest)));
+    BlockCapsule signed = buildSignedBlock(parentHash);
+    byte[] digest = signed.getRawHashBytes();
+    // Bypass BlockCapsule#setPqAuthSig (which clears witness_signature) so the
+    // resulting block carries BOTH legacy ECDSA + PQ signatures — the wire shape
+    // that the mutual-exclusion check in validateSignature must reject.
+    BlockHeader dualHeader = signed.getInstance().getBlockHeader().toBuilder()
+        .setPqAuthSig(buildPQAuthSig(signPQ(digest)))
+        .build();
+    Block dual = signed.getInstance().toBuilder().setBlockHeader(dualHeader).build();
+    BlockCapsule block = new BlockCapsule(dual);
     block.validateSignature(
         dbManager.getDynamicPropertiesStore(), dbManager.getAccountStore());
   }

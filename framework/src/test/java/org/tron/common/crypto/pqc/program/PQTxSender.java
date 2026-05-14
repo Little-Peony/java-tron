@@ -12,10 +12,14 @@ import org.tron.api.GrpcAPI.EmptyMessage;
 import org.tron.api.GrpcAPI.Return;
 import org.tron.api.WalletGrpc;
 import org.tron.api.WalletGrpc.WalletBlockingStub;
+import org.tron.common.crypto.ECKey;
+import org.tron.common.crypto.ECKey.ECDSASignature;
 import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.common.math.StrictMathWrapper;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
+import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.StringUtil;
 import org.tron.common.utils.client.utils.AbiUtil;
 import org.tron.core.capsule.TransactionCapsule;
@@ -27,17 +31,19 @@ import org.tron.protos.contract.BalanceContract.TransferContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 /**
- * Demo client that connects to {@link PQWitnessNode} and continuously broadcasts FN-DSA-512 signed
- * transfer and TRC20 transactions at 10 TPS.
+ * Demo client that connects to {@link PQWitnessNode} and continuously broadcasts transfer and
+ * TRC20 transactions signed by FN-DSA-512 and ECDSA.
  * <p>
- * The keypair is derived from the same fixed seed used by PQWitnessNode, so no out-of-band key
- * exchange is needed.
+ * The FN-DSA-512 keypair is derived from the same fixed seed used by PQWitnessNode, so no
+ * out-of-band key exchange is needed. ECDSA transactions use -Decdsa.private.key.
  * <p>
  * Run from the repository root:
  *   ./gradlew :framework:buildFullNodeJar :framework:compileTestJava
+ *   CP="framework/build/classes/java/test:framework/build/resources/test"
+ *   CP="$CP:framework/build/libs/FullNode.jar"
  *   java -Dpqc.host=127.0.0.1 -Dpqc.port=50051 -Dpqc.transfer.tps=10 -Dpqc.trc20.tps=10 \
- *     -cp "framework/build/classes/java/test:framework/build/resources/test:\
- *          framework/build/libs/FullNode.jar" \
+ *     -Decdsa.private.key=HEX_PRIVATE_KEY -Decdsa.transfer.tps=10 -Decdsa.trc20.tps=10 \
+ *     -cp "$CP" \
  *     org.tron.common.crypto.pqc.program.PQTxSender
  *
  * Optional JVM args:
@@ -45,6 +51,9 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  *   -Dpqc.port=50051
  *   -Dpqc.transfer.tps=10
  *   -Dpqc.trc20.tps=10
+ *   -Decdsa.private.key=1234567890123456789012345678901234567890123456789012345678901234
+ *   -Decdsa.transfer.tps=10
+ *   -Decdsa.trc20.tps=10
  */
 public class PQTxSender {
 
@@ -57,7 +66,7 @@ public class PQTxSender {
    * Recipient of the demo transfer.
    */
   private static final byte[] TO_ADDR =
-      Commons.decodeFromBase58Check("T9zNBvTFD97XzGsjGqvg2QHizTG8sibsHt");
+      Commons.decodeFromBase58Check("TKmyxLsRR2FWMVEHaQA2pZh1xB7oXPXzG1");
 
   /**
    * TRC20 contract address (USDT on TRON).
@@ -76,13 +85,27 @@ public class PQTxSender {
   private static final long TRC20_FEE_LIMIT = 1000_000_000L;
 
   /**
-   * Default send rate for transfer transactions.
+   * Default demo ECDSA private key. Override it with -Decdsa.private.key for a funded account.
+   */
+  private static final String DEFAULT_ECDSA_PRIVATE_KEY =
+      "1234567890123456789012345678901234567890123456789012345678901234";
+
+  /**
+   * Default send rate for FN-DSA-512 transfer transactions.
    */
   private static final double DEFAULT_TRANSFER_TPS = 10.0d;
   /**
-   * Default send rate for TRC20 transactions.
+   * Default send rate for FN-DSA-512 TRC20 transactions.
    */
   private static final double DEFAULT_TRC20_TPS = 10.0d;
+  /**
+   * Default send rate for ECDSA transfer transactions.
+   */
+  private static final double DEFAULT_ECDSA_TRANSFER_TPS = 10.0d;
+  /**
+   * Default send rate for ECDSA TRC20 transactions.
+   */
+  private static final double DEFAULT_ECDSA_TRC20_TPS = 10.0d;
 
   public static void main(String[] args) throws Exception {
     // Force INFO level: logback-test.xml (on the test classpath) sets root=DEBUG
@@ -100,15 +123,24 @@ public class PQTxSender {
     byte[] userPriv = userKp.getPrivateKey();
     byte[] signerAddr = FNDSA512.computeAddress(userPub);
     byte[] ownerAddr = Commons.decodeFromBase58Check("TJUfbazhixG4YtqJxUDmv5XisZvvy1wP91");
+    ECKey ecdsaKey = ECKey.fromPrivate(
+        ByteArray.fromHexString(System.getProperty("ecdsa.private.key",
+            DEFAULT_ECDSA_PRIVATE_KEY)));
+    byte[] ecdsaOwnerAddr = ecdsaKey.getAddress();
     double transferTps = readTps("pqc.transfer.tps", DEFAULT_TRANSFER_TPS);
     double trc20Tps = readTps("pqc.trc20.tps", DEFAULT_TRC20_TPS);
+    double ecdsaTransferTps = readTps("ecdsa.transfer.tps", DEFAULT_ECDSA_TRANSFER_TPS);
+    double ecdsaTrc20Tps = readTps("ecdsa.trc20.tps", DEFAULT_ECDSA_TRC20_TPS);
 
-    System.out.println("=== PQC Client ===");
+    System.out.println("=== PQC/ECDSA Tx Sender ===");
     System.out.println("Connecting to " + HOST + ":" + PORT);
-    System.out.println("Owner address:  " + ByteArray.toHexString(ownerAddr));
-    System.out.println("Signer address: " + ByteArray.toHexString(signerAddr));
-    System.out.println("Transfer TPS:   " + transferTps);
-    System.out.println("TRC20 TPS:      " + trc20Tps);
+    System.out.println("PQC owner address:    " + ByteArray.toHexString(ownerAddr));
+    System.out.println("PQC signer address:   " + ByteArray.toHexString(signerAddr));
+    System.out.println("PQC transfer TPS:     " + transferTps);
+    System.out.println("PQC TRC20 TPS:        " + trc20Tps);
+    System.out.println("ECDSA owner address:  " + ByteArray.toHexString(ecdsaOwnerAddr));
+    System.out.println("ECDSA transfer TPS:   " + ecdsaTransferTps);
+    System.out.println("ECDSA TRC20 TPS:      " + ecdsaTrc20Tps);
 
     // ── 2. Connect via gRPC ───────────────────────────────────────────────
     ManagedChannel channel = ManagedChannelBuilder
@@ -124,11 +156,21 @@ public class PQTxSender {
       Thread trc20Thread = new Thread(
           () -> runTrc20Loop(stub, ownerAddr, userPub, userPriv, trc20Tps),
           "pqc-trc20-sender-grpc");
+      Thread ecdsaTransferThread = new Thread(
+          () -> runEcdsaTransferLoop(stub, ecdsaOwnerAddr, ecdsaKey, ecdsaTransferTps),
+          "ecdsa-transfer-sender-grpc");
+      Thread ecdsaTrc20Thread = new Thread(
+          () -> runEcdsaTrc20Loop(stub, ecdsaOwnerAddr, ecdsaKey, ecdsaTrc20Tps),
+          "ecdsa-trc20-sender-grpc");
 
       transferThread.start();
       trc20Thread.start();
+      ecdsaTransferThread.start();
+      ecdsaTrc20Thread.start();
       transferThread.join();
       trc20Thread.join();
+      ecdsaTransferThread.join();
+      ecdsaTrc20Thread.join();
     } finally {
       channel.shutdown();
       channel.awaitTermination(5, TimeUnit.SECONDS);
@@ -139,6 +181,11 @@ public class PQTxSender {
     return MessageDigest.getInstance("SHA-256").digest(data);
   }
 
+  private static byte[] ecdsaTxId(Transaction tx) {
+    return Sha256Hash.hash(CommonParameter.getInstance().isECKeyCryptoEngine(),
+        tx.getRawData().toByteArray());
+  }
+
   private static byte[] longToBytes(long value) {
     return ByteBuffer.allocate(8).putLong(value).array();
   }
@@ -146,7 +193,7 @@ public class PQTxSender {
   private static void runTransferLoop(WalletBlockingStub stub, byte[] ownerAddr,
       byte[] userPub, byte[] userPriv, double tps) {
     if (tps <= 0) {
-      System.out.println("transfer sender disabled");
+      System.out.println("pqc transfer sender disabled");
       return;
     }
     long intervalMs = tpsToIntervalMs(tps);
@@ -161,7 +208,7 @@ public class PQTxSender {
   private static void runTrc20Loop(WalletBlockingStub stub, byte[] ownerAddr,
       byte[] userPub, byte[] userPriv, double tps) {
     if (tps <= 0) {
-      System.out.println("trc20 sender disabled");
+      System.out.println("pqc trc20 sender disabled");
       return;
     }
     long intervalMs = tpsToIntervalMs(tps);
@@ -169,6 +216,36 @@ public class PQTxSender {
     while (!Thread.currentThread().isInterrupted()) {
       long loopStart = System.currentTimeMillis();
       sendTrc20Transaction(stub, ownerAddr, userPub, userPriv, counter++);
+      sleepRemaining(intervalMs, loopStart);
+    }
+  }
+
+  private static void runEcdsaTransferLoop(WalletBlockingStub stub, byte[] ownerAddr,
+      ECKey ecdsaKey, double tps) {
+    if (tps <= 0) {
+      System.out.println("ecdsa transfer sender disabled");
+      return;
+    }
+    long intervalMs = tpsToIntervalMs(tps);
+    long counter = 1L;
+    while (!Thread.currentThread().isInterrupted()) {
+      long loopStart = System.currentTimeMillis();
+      sendEcdsaTransferTransaction(stub, ownerAddr, ecdsaKey, counter++);
+      sleepRemaining(intervalMs, loopStart);
+    }
+  }
+
+  private static void runEcdsaTrc20Loop(WalletBlockingStub stub, byte[] ownerAddr,
+      ECKey ecdsaKey, double tps) {
+    if (tps <= 0) {
+      System.out.println("ecdsa trc20 sender disabled");
+      return;
+    }
+    long intervalMs = tpsToIntervalMs(tps);
+    long counter = 1L;
+    while (!Thread.currentThread().isInterrupted()) {
+      long loopStart = System.currentTimeMillis();
+      sendEcdsaTrc20Transaction(stub, ownerAddr, ecdsaKey, counter++);
       sleepRemaining(intervalMs, loopStart);
     }
   }
@@ -195,12 +272,11 @@ public class PQTxSender {
           .build();
 
       Return result = timedStub.broadcastTransaction(signedTx);
-      System.out.println("[transfer-" + seq + "] ref=#" + refNum
+      System.out.println("[pqc-transfer-" + seq + "] ref=#" + refNum
           + " tx=" + ByteArray.toHexString(txId)
-          + " result=" + result.getCode()
-          + " msg=" + result.getMessage().toStringUtf8());
+          + " result=" + result.getCode());
     } catch (Exception e) {
-      System.err.println("[transfer-" + seq + "] send failed: " + e.getMessage());
+      System.err.println("[pqc-transfer-" + seq + "] send failed: " + e.getMessage());
       e.printStackTrace(System.err);
     }
   }
@@ -231,14 +307,72 @@ public class PQTxSender {
           .build();
 
       Return result = timedStub.broadcastTransaction(signedTx);
-      System.out.println("[trc20-" + seq + "] ref=#" + refNum
+      System.out.println("[pqc-trc20-" + seq + "] ref=#" + refNum
           + " tx=" + ByteArray.toHexString(txId)
-          + " result=" + result.getCode()
-          + " msg=" + result.getMessage().toStringUtf8());
+          + " result=" + result.getCode());
     } catch (Exception e) {
-      System.err.println("[trc20-" + seq + "] send failed: " + e.getMessage());
+      System.err.println("[pqc-trc20-" + seq + "] send failed: " + e.getMessage());
       e.printStackTrace(System.err);
     }
+  }
+
+  private static void sendEcdsaTransferTransaction(WalletBlockingStub stub, byte[] ownerAddr,
+      ECKey ecdsaKey, long seq) {
+    try {
+      WalletBlockingStub timedStub = stub.withDeadlineAfter(10, TimeUnit.SECONDS);
+
+      Block head = timedStub.getNowBlock(EmptyMessage.getDefaultInstance());
+      byte[] headerRaw = head.getBlockHeader().getRawData().toByteArray();
+      long refNum = head.getBlockHeader().getRawData().getNumber();
+      byte[] blockHash = sha256(headerRaw);
+
+      Transaction tx = buildTransferTransaction(ownerAddr, blockHash, refNum);
+      byte[] txId = ecdsaTxId(tx);
+      Transaction signedTx = signWithEcdsa(tx, ecdsaKey, txId);
+
+      Return result = timedStub.broadcastTransaction(signedTx);
+      System.out.println("[ecdsa-transfer-" + seq + "] ref=#" + refNum
+          + " tx=" + ByteArray.toHexString(txId)
+          + " result=" + result.getCode());
+    } catch (Exception e) {
+      System.err.println("[ecdsa-transfer-" + seq + "] send failed: " + e.getMessage());
+      e.printStackTrace(System.err);
+    }
+  }
+
+  private static void sendEcdsaTrc20Transaction(WalletBlockingStub stub, byte[] ownerAddr,
+      ECKey ecdsaKey, long seq) {
+    try {
+      WalletBlockingStub timedStub = stub.withDeadlineAfter(10, TimeUnit.SECONDS);
+
+      Block head = timedStub.getNowBlock(EmptyMessage.getDefaultInstance());
+      byte[] headerRaw = head.getBlockHeader().getRawData().toByteArray();
+      long refNum = head.getBlockHeader().getRawData().getNumber();
+      byte[] blockHash = sha256(headerRaw);
+
+      Transaction tx = buildTrc20Transaction(ownerAddr, blockHash, refNum);
+      Transaction.raw.Builder rawBuilder = tx.getRawData().toBuilder();
+      rawBuilder.setFeeLimit(TRC20_FEE_LIMIT);
+      tx = tx.toBuilder().setRawData(rawBuilder).build();
+
+      byte[] txId = ecdsaTxId(tx);
+      Transaction signedTx = signWithEcdsa(tx, ecdsaKey, txId);
+
+      Return result = timedStub.broadcastTransaction(signedTx);
+      System.out.println("[ecdsa-trc20-" + seq + "] ref=#" + refNum
+          + " tx=" + ByteArray.toHexString(txId)
+          + " result=" + result.getCode());
+    } catch (Exception e) {
+      System.err.println("[ecdsa-trc20-" + seq + "] send failed: " + e.getMessage());
+      e.printStackTrace(System.err);
+    }
+  }
+
+  private static Transaction signWithEcdsa(Transaction tx, ECKey ecdsaKey, byte[] txId) {
+    ECDSASignature signature = ecdsaKey.sign(txId);
+    return tx.toBuilder()
+        .addSignature(ByteString.copyFrom(signature.toByteArray()))
+        .build();
   }
 
   private static Transaction buildTransferTransaction(byte[] ownerAddr, byte[] blockHash,

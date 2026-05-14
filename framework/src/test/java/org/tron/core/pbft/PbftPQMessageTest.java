@@ -132,9 +132,12 @@ public class PbftPQMessageTest {
     Miner miner = pqMiner(kp);
     PbftMessage msg = PbftMessage.prePrepareBlockMsg(emptyBlock(), 1, miner);
 
+    // UNKNOWN_PQ_SCHEME (0) is normalized to FN_DSA_512 by PQSchemeRegistry#resolve
+    // for proto3 default-zero compatibility, so use setSchemeValue() to inject a
+    // truly unrecognized scheme value that bypasses the enum and the normalizer.
     PBFTMessage tampered = msg.getPbftMessage().toBuilder()
         .setPqAuthSig(msg.getPbftMessage().getPqAuthSig().toBuilder()
-            .setScheme(PQScheme.UNKNOWN_PQ_SCHEME))
+            .setSchemeValue(999))
         .build();
     PbftMessage rebuilt = rebuild(msg, tampered);
     SignatureException ex = assertThrows(SignatureException.class, rebuilt::analyzeSignature);

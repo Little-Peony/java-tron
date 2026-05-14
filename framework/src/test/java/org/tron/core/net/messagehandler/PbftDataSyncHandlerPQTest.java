@@ -81,8 +81,8 @@ public class PbftDataSyncHandlerPQTest {
     PQAuthSig sig2 = pqSign(kp2, hash);
 
     List<ByteString> witnesses = Arrays.asList(
-        ByteString.copyFrom(PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, kp1.getPublicKey())),
-        ByteString.copyFrom(PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, kp2.getPublicKey())));
+        pqAddress(kp1),
+        pqAddress(kp2));
 
     Assert.assertTrue(invokeValid(raw, Collections.emptyList(),
         Arrays.asList(sig1, sig2), witnesses));
@@ -102,7 +102,7 @@ public class PbftDataSyncHandlerPQTest {
 
     List<ByteString> witnesses = Arrays.asList(
         ByteString.copyFrom(ec.getAddress()),
-        ByteString.copyFrom(PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, kp.getPublicKey())));
+        pqAddress(kp));
 
     Assert.assertTrue(invokeValid(raw,
         Collections.singletonList(ByteString.copyFrom(ecSig)),
@@ -119,7 +119,7 @@ public class PbftDataSyncHandlerPQTest {
     FNDSA512 kp = new FNDSA512();
     PQAuthSig pq = pqSign(kp, hash);
     List<ByteString> witnesses = Collections.singletonList(
-        ByteString.copyFrom(PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, kp.getPublicKey())));
+        pqAddress(kp));
 
     Assert.assertFalse(invokeValid(raw, Collections.emptyList(),
         Collections.singletonList(pq), witnesses));
@@ -134,7 +134,7 @@ public class PbftDataSyncHandlerPQTest {
     FNDSA512 kp = new FNDSA512();
     PQAuthSig pq = pqSign(kp, hash);
     List<ByteString> witnesses = Collections.singletonList(
-        ByteString.copyFrom(PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, kp.getPublicKey())));
+        pqAddress(kp));
 
     Mockito.when(dynamicPropertiesStore.isPqSchemeAllowed(PQScheme.FN_DSA_512)).thenReturn(false);
     Assert.assertFalse(invokeValid(raw, Collections.emptyList(),
@@ -155,7 +155,7 @@ public class PbftDataSyncHandlerPQTest {
         .setSignature(ByteString.copyFrom(sig))
         .build();
     List<ByteString> witnesses = Collections.singletonList(
-        ByteString.copyFrom(PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, kp.getPublicKey())));
+        pqAddress(kp));
 
     Assert.assertFalse(invokeValid(raw, Collections.emptyList(),
         Collections.singletonList(pq), witnesses));
@@ -170,12 +170,29 @@ public class PbftDataSyncHandlerPQTest {
     FNDSA512 kp = new FNDSA512();
     PQAuthSig pq = pqSign(kp, hash);
     FNDSA512 stranger = new FNDSA512();
-    List<ByteString> witnesses = Collections.singletonList(
-        ByteString.copyFrom(
-            PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, stranger.getPublicKey())));
+    List<ByteString> witnesses = Collections.singletonList(pqAddress(stranger));
 
     Assert.assertFalse(invokeValid(raw, Collections.emptyList(),
         Collections.singletonList(pq), witnesses));
+  }
+
+  @Test
+  public void duplicatePqSignerDoesNotInflateQuorum() throws Exception {
+    Param.getInstance().setAgreeNodeCount(2);
+    Raw raw = buildRaw(8);
+    byte[] hash = Sha256Hash.hash(true, raw.toByteArray());
+
+    FNDSA512 kp = new FNDSA512();
+    PQAuthSig sig1 = pqSign(kp, hash);
+    PQAuthSig sig2 = pqSign(kp, hash);
+    Assert.assertNotEquals("Falcon should produce randomized signatures",
+        sig1.getSignature(), sig2.getSignature());
+
+    List<ByteString> witnesses = Collections.singletonList(
+        pqAddress(kp));
+
+    Assert.assertFalse(invokeValid(raw, Collections.emptyList(),
+        Arrays.asList(sig1, sig2), witnesses));
   }
 
   @Test
@@ -194,7 +211,7 @@ public class PbftDataSyncHandlerPQTest {
         .setSignature(ByteString.copyFrom(tampered))
         .build();
     List<ByteString> witnesses = Collections.singletonList(
-        ByteString.copyFrom(PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, kp.getPublicKey())));
+        pqAddress(kp));
 
     Assert.assertFalse(invokeValid(raw, Collections.emptyList(),
         Collections.singletonList(pq), witnesses));
@@ -208,6 +225,11 @@ public class PbftDataSyncHandlerPQTest {
         .setMsgType(MsgType.COMMIT)
         .setData(ByteString.copyFromUtf8("payload-" + viewN))
         .build();
+  }
+
+  private static ByteString pqAddress(FNDSA512 kp) {
+    return ByteString.copyFrom(
+        PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, kp.getPublicKey()));
   }
 
   private static PQAuthSig pqSign(FNDSA512 kp, byte[] hash) {

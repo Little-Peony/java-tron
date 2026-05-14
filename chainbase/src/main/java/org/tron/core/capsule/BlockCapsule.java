@@ -421,11 +421,8 @@ public class BlockCapsule implements ProtoCapsule<Block> {
 
   public boolean hasWitnessSignature() {
     BlockHeader header = getInstance().getBlockHeader();
-    if (!header.getWitnessSignature().isEmpty()) {
-      return true;
-    }
-    PQAuthSig auth = header.getPqAuthSig();
-    return auth != null && !auth.getSignature().isEmpty();
+    return !header.getWitnessSignature().isEmpty()
+        || !header.getPqAuthSig().getSignature().isEmpty();
   }
 
   @Override
