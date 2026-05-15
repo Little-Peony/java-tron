@@ -504,7 +504,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       try {
         weight = StrictMathWrapper.addExact(weight,
             validatePQSignature(transaction, permission, signedAddresses,
-                dynamicPropertiesStore));
+                dynamicPropertiesStore, approveList));
       } catch (ArithmeticException e) {
         throw new PermissionException("weight overflow");
       }
@@ -723,9 +723,10 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
    *       part of {@code raw_data}.</li>
    * </ol>
    */
-  static long validatePQSignature(Transaction transaction, Permission permission,
+  public static long validatePQSignature(Transaction transaction, Permission permission,
       java.util.Set<ByteString> signedAddresses,
-      DynamicPropertiesStore dynamicPropertiesStore)
+      DynamicPropertiesStore dynamicPropertiesStore,
+      List<ByteString> approveList)
       throws PermissionException {
     byte[] digest = computeRawHash(transaction).getBytes();
 
@@ -769,6 +770,9 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
         weight = StrictMathWrapper.addExact(weight, matched.getWeight());
       } catch (ArithmeticException e) {
         throw new PermissionException("weight overflow");
+      }
+      if (approveList != null) {
+        approveList.add(addrBs);
       }
     }
     return weight;

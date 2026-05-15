@@ -37,6 +37,7 @@ import org.tron.api.GrpcAPI.Return.response_code;
 import org.tron.api.GrpcAPI.TransactionExtention;
 import org.tron.api.GrpcAPI.TransactionSignWeight;
 import org.tron.api.GrpcAPI.TransactionSignWeight.Result;
+import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
@@ -221,11 +222,24 @@ public class TransactionUtil {
           }
         }
         tswBuilder.setPermission(permission);
-        if (trx.getSignatureCount() > 0) {
+        if (trx.getSignatureCount() > 0 || trx.getPqAuthSigCount() > 0) {
           List<ByteString> approveList = new ArrayList<>();
-          long currentWeight = TransactionCapsule.checkWeight(permission, trx.getSignatureList(),
-              Sha256Hash.hash(CommonParameter.getInstance()
-                  .isECKeyCryptoEngine(), trx.getRawData().toByteArray()), approveList);
+          long currentWeight = 0L;
+          if (trx.getSignatureCount() > 0) {
+            currentWeight = TransactionCapsule.checkWeight(permission, trx.getSignatureList(),
+                Sha256Hash.hash(CommonParameter.getInstance()
+                    .isECKeyCryptoEngine(), trx.getRawData().toByteArray()), approveList);
+          }
+          if (trx.getPqAuthSigCount() > 0) {
+            java.util.Set<ByteString> signedAddresses = new java.util.HashSet<>(approveList);
+            try {
+              currentWeight = StrictMathWrapper.addExact(currentWeight,
+                  TransactionCapsule.validatePQSignature(trx, permission, signedAddresses,
+                      chainBaseManager.getDynamicPropertiesStore(), approveList));
+            } catch (ArithmeticException e) {
+              throw new PermissionException("weight overflow");
+            }
+          }
           tswBuilder.addAllApprovedList(approveList);
           tswBuilder.setCurrentWeight(currentWeight);
         }
