@@ -11,6 +11,7 @@ import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.LocalWitnesses;
+import org.tron.common.utils.PqKeypair;
 import org.tron.core.exception.CipherException;
 import org.tron.core.exception.TronError;
 import org.tron.keystore.Credentials;
@@ -121,34 +122,23 @@ public class WitnessInitializer {
    * byte[])}.
    */
   public static LocalWitnesses initFromPQOnly(PQScheme scheme,
-      List<String> pqPrivateKeys, List<String> pqPublicKeys,
-      String witnessAccountAddress) {
-    if (pqPublicKeys == null || pqPublicKeys.isEmpty()) {
+      List<PqKeypair> pqKeypairs, String witnessAccountAddress) {
+    if (pqKeypairs == null || pqKeypairs.isEmpty()) {
       throw new TronError(
-          "PQ public keys must be set for PQ-only witness nodes",
-          TronError.ErrCode.WITNESS_INIT);
-    }
-    if (pqPrivateKeys == null || pqPrivateKeys.isEmpty()) {
-      throw new TronError(
-          "PQ private keys must be set for PQ-only witness nodes",
-          TronError.ErrCode.WITNESS_INIT);
-    }
-    if (pqPrivateKeys.size() != pqPublicKeys.size()) {
-      throw new TronError(
-          "PQ private/public key count mismatch",
+          "PQ keypairs must be set for PQ-only witness nodes",
           TronError.ErrCode.WITNESS_INIT);
     }
     LocalWitnesses witnesses = new LocalWitnesses();
     witnesses.setPqScheme(scheme);
-    witnesses.setPqKeypairs(pqPrivateKeys, pqPublicKeys);
+    witnesses.setPqKeypairs(pqKeypairs);
 
     byte[] address;
     if (StringUtils.isBlank(witnessAccountAddress)) {
-      byte[] firstPubKey = ByteArray.fromHexString(pqPublicKeys.get(0));
+      byte[] firstPubKey = ByteArray.fromHexString(pqKeypairs.get(0).getPublicKey());
       address = PQSchemeRegistry.computeAddress(scheme, firstPubKey);
       logger.debug("Derived PQ-only witness address from public key");
     } else {
-      if (pqPublicKeys.size() != 1) {
+      if (pqKeypairs.size() != 1) {
         throw new TronError(
             "LocalWitnessAccountAddress can only be set when there is only one PQ keypair",
             TronError.ErrCode.WITNESS_INIT);

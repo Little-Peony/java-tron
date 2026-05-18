@@ -55,6 +55,7 @@ import org.tron.common.parameter.RateLimiterInitialization;
 import org.tron.common.setting.RocksDbSettings;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.LocalWitnesses;
+import org.tron.common.utils.PqKeypair;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.config.Configuration;
@@ -990,13 +991,12 @@ public class Args extends CommonParameter {
         }
         // Each entry is the extended private key f‖g‖F‖h (priv ‖ pub) hex,
         // sized (privLen + pubLen) bytes for the active scheme. We split here
-        // so downstream consumers (ConsensusService, LocalWitnesses) keep the
-        // same priv/pub split they already use — derivePublicKey(priv) replaces
-        // the previous explicit `pub` config field.
+        // into PqKeypair entries so downstream consumers (ConsensusService,
+        // LocalWitnesses) get the priv/pub halves bundled — derivePublicKey
+        // (priv) replaces the previous explicit `pub` config field.
         int privHexLen = PQSchemeRegistry.getPrivateKeyLength(scheme) * 2;
         int extHexLen = privHexLen + PQSchemeRegistry.getPublicKeyLength(scheme) * 2;
-        List<String> pqPrivateKeys = new ArrayList<>(pqEntries.size());
-        List<String> pqPublicKeys = new ArrayList<>(pqEntries.size());
+        List<PqKeypair> pqKeypairs = new ArrayList<>(pqEntries.size());
         for (int i = 0; i < pqEntries.size(); i++) {
           String hex = pqEntries.get(i);
           String stripped = hex;
@@ -1010,11 +1010,12 @@ public class Args extends CommonParameter {
                 stripped == null ? 0 : stripped.length()),
                 TronError.ErrCode.WITNESS_INIT);
           }
-          pqPrivateKeys.add(stripped.substring(0, privHexLen));
-          pqPublicKeys.add(stripped.substring(privHexLen));
+          pqKeypairs.add(new PqKeypair(
+              stripped.substring(0, privHexLen),
+              stripped.substring(privHexLen)));
         }
         localWitnesses = WitnessInitializer.initFromPQOnly(
-            scheme, pqPrivateKeys, pqPublicKeys, lwConfig.getAccountAddress());
+            scheme, pqKeypairs, lwConfig.getAccountAddress());
         return;
       }
     }

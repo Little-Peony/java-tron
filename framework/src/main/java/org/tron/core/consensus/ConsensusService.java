@@ -13,6 +13,7 @@ import org.tron.common.crypto.SignUtils;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.crypto.pqc.PQSignature;
 import org.tron.common.parameter.CommonParameter;
+import org.tron.common.utils.PqKeypair;
 import org.tron.consensus.Consensus;
 import org.tron.consensus.base.Param;
 import org.tron.consensus.base.Param.Miner;
@@ -50,15 +51,8 @@ public class ConsensusService {
     param.setAgreeNodeCount(parameter.getAgreeNodeCount());
     List<Miner> miners = new ArrayList<>();
     List<String> privateKeys = Args.getLocalWitnesses().getPrivateKeys();
-    List<String> pqPrivateKeys = Args.getLocalWitnesses().getPqPrivateKeys();
-    List<String> pqPublicKeys = Args.getLocalWitnesses().getPqPublicKeys();
-    if (pqPublicKeys.size() != pqPrivateKeys.size()) {
-      throw new TronError(
-          "localwitness_pq.keys size mismatch: " + pqPrivateKeys.size()
-              + " private vs " + pqPublicKeys.size() + " public",
-          TronError.ErrCode.WITNESS_INIT);
-    }
-    if (!privateKeys.isEmpty() && !pqPrivateKeys.isEmpty()) {
+    List<PqKeypair> pqKeypairs = Args.getLocalWitnesses().getPqKeypairs();
+    if (!privateKeys.isEmpty() && !pqKeypairs.isEmpty()) {
       throw new TronError(
           "legacy localwitness keys and localwitness_pq.keys are mutually exclusive",
           TronError.ErrCode.WITNESS_INIT);
@@ -93,12 +87,12 @@ public class ConsensusService {
       Miner miner = param.new Miner(privateKey, ByteString.copyFrom(privateKeyAddress),
           ByteString.copyFrom(witnessAddress));
       miners.add(miner);
-    } else if (pqPrivateKeys.size() > 1) {
+    } else if (pqKeypairs.size() > 1) {
       PQScheme scheme = Args.getLocalWitnesses().getPqScheme();
       requireSupportedPqScheme(scheme);
-      for (int i = 0; i < pqPrivateKeys.size(); i++) {
-        byte[] privBytes = fromHexString(pqPrivateKeys.get(i));
-        byte[] pubBytes = fromHexString(pqPublicKeys.get(i));
+      for (PqKeypair kp : pqKeypairs) {
+        byte[] privBytes = fromHexString(kp.getPrivateKey());
+        byte[] pubBytes = fromHexString(kp.getPublicKey());
         PQSignature keypair = PQSchemeRegistry.fromKeypair(scheme, privBytes, pubBytes);
         byte[] sk = keypair.getPrivateKey();
         byte[] pk = keypair.getPublicKey();
@@ -117,8 +111,8 @@ public class ConsensusService {
         logger.info("Add {} witness (from configured keypair): {}, size: {}",
             scheme, Hex.toHexString(pqAddress), miners.size());
       }
-    } else if (pqPrivateKeys.size() == 1) {
-      miners.add(buildPQOnlyMinerFromKeypair(param, pqPrivateKeys.get(0), pqPublicKeys.get(0)));
+    } else if (pqKeypairs.size() == 1) {
+      miners.add(buildPQOnlyMinerFromKeypair(param, pqKeypairs.get(0)));
     }
 
     param.setMiners(miners);
@@ -128,12 +122,11 @@ public class ConsensusService {
     logger.info("consensus service start success");
   }
 
-  private Miner buildPQOnlyMinerFromKeypair(Param param, String pqPrivateKey,
-      String pqPublicKey) {
+  private Miner buildPQOnlyMinerFromKeypair(Param param, PqKeypair pqKeypair) {
     PQScheme scheme = Args.getLocalWitnesses().getPqScheme();
     requireSupportedPqScheme(scheme);
-    byte[] privBytes = fromHexString(pqPrivateKey);
-    byte[] pubBytes = fromHexString(pqPublicKey);
+    byte[] privBytes = fromHexString(pqKeypair.getPrivateKey());
+    byte[] pubBytes = fromHexString(pqKeypair.getPublicKey());
     PQSignature keypair = PQSchemeRegistry.fromKeypair(scheme, privBytes, pubBytes);
     byte[] sk = keypair.getPrivateKey();
     byte[] pk = keypair.getPublicKey();

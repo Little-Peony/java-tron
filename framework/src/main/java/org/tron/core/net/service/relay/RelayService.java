@@ -23,6 +23,7 @@ import org.tron.common.log.layout.DesensitizedConverter;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.LocalWitnesses;
+import org.tron.common.utils.PqKeypair;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.TransactionCapsule;
@@ -72,7 +73,7 @@ public class RelayService {
 
   private final int keySize = Args.getLocalWitnesses().getPrivateKeys().size();
 
-  private final int pqKeySize = Args.getLocalWitnesses().getPqPrivateKeys().size();
+  private final int pqKeySize = Args.getLocalWitnesses().getPqKeypairs().size();
 
   private final ByteString witnessAddress =
       Args.getLocalWitnesses().getWitnessAccountAddress() != null ? ByteString
@@ -135,8 +136,9 @@ public class RelayService {
       } else {
         LocalWitnesses lw = Args.getLocalWitnesses();
         PQScheme scheme = lw.getPqScheme();
-        byte[] privKey = ByteArray.fromHexString(lw.getPqPrivateKeys().get(0));
-        byte[] pubKey = ByteArray.fromHexString(lw.getPqPublicKeys().get(0));
+        PqKeypair kp = lw.getPqKeypairs().get(0);
+        byte[] privKey = ByteArray.fromHexString(kp.getPrivateKey());
+        byte[] pubKey = ByteArray.fromHexString(kp.getPublicKey());
         byte[] sig = PQSchemeRegistry.sign(scheme, privKey, digest);
         builder.setPqAuthSig(PQAuthSig.newBuilder()
             .setScheme(scheme)
