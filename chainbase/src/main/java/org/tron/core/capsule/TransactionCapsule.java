@@ -32,7 +32,9 @@ import java.io.IOException;
 import java.security.SignatureException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -495,16 +497,13 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     // Hybrid weight: ECDSA signatures and PQ witnesses share one threshold
     // check. The two domains derive distinct addresses (Keccak vs SHA-256
     // tagged with 0x41), so a key entry contributes to at most one path.
-    java.util.Set<ByteString> signedAddresses = new java.util.HashSet<>();
     List<ByteString> approveList = new ArrayList<>();
     long weight = checkWeight(permission, transaction.getSignatureList(), hash, approveList);
-    signedAddresses.addAll(approveList);
 
-    if (transaction.getPqAuthSigCount() > 0) {
+    if (dynamicPropertiesStore.isAnyPqSchemeAllowed() && transaction.getPqAuthSigCount() > 0) {
       try {
         weight = StrictMathWrapper.addExact(weight,
-            validatePQSignature(transaction, permission, signedAddresses,
-                dynamicPropertiesStore, approveList));
+            validatePQSignatureGetWeight(transaction, permission, dynamicPropertiesStore, approveList));
       } catch (ArithmeticException e) {
         throw new PermissionException("weight overflow");
       }
@@ -723,12 +722,14 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
    *       part of {@code raw_data}.</li>
    * </ol>
    */
-  public static long validatePQSignature(Transaction transaction, Permission permission,
-      java.util.Set<ByteString> signedAddresses,
+  public static long validatePQSignatureGetWeight(Transaction transaction, Permission permission,
       DynamicPropertiesStore dynamicPropertiesStore,
       List<ByteString> approveList)
       throws PermissionException {
+
     byte[] digest = computeRawHash(transaction).getBytes();
+
+    Set<ByteString> signedAddresses = new HashSet<>(approveList);
 
     long weight = 0L;
     for (PQAuthSig witness : transaction.getPqAuthSigList()) {
