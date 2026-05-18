@@ -1552,9 +1552,10 @@ public class Manager {
         trace.exec();
         trace.setResult();
         logger.info("Retry result when push: {}, for tx id: {}, tx resultCode in receipt: {}.",
-            blockCap.hasWitnessSignature(), txId, trace.getReceipt().getResult());
+            blockCap.hasWitnessSignature(chainBaseManager.getDynamicPropertiesStore()), txId,
+            trace.getReceipt().getResult());
       }
-      if (blockCap.hasWitnessSignature()) {
+      if (blockCap.hasWitnessSignature(chainBaseManager.getDynamicPropertiesStore())) {
         trace.check();
       }
     }
@@ -1600,7 +1601,9 @@ public class Manager {
     if (cost > 100) {
       String type = "broadcast";
       if (Objects.nonNull(blockCap)) {
-        type = blockCap.hasWitnessSignature() ? "apply" : "pack";
+        type =
+            blockCap.hasWitnessSignature(chainBaseManager.getDynamicPropertiesStore()) ? "apply" :
+                "pack";
       }
       logger.info("Process transaction {} cost {} ms during {}, {}",
              Hex.toHexString(transactionInfo.getId()), cost, type, contract.getType().name());

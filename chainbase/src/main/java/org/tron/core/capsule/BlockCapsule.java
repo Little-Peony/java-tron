@@ -47,10 +47,8 @@ import org.tron.core.store.AccountStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.BlockHeader;
-import org.tron.protos.Protocol.Key;
 import org.tron.protos.Protocol.PQScheme;
 import org.tron.protos.Protocol.PQAuthSig;
-import org.tron.protos.Protocol.Permission;
 import org.tron.protos.Protocol.Transaction;
 
 @Slf4j(topic = "capsule")
@@ -203,41 +201,27 @@ public class BlockCapsule implements ProtoCapsule<Block> {
   public boolean validateSignature(DynamicPropertiesStore dynamicPropertiesStore,
       AccountStore accountStore) throws ValidateSignatureException {
     BlockHeader header = block.getBlockHeader();
-    boolean hasLegacy = !header.getWitnessSignature().isEmpty();
-    boolean hasPq = header.hasPqAuthSig();
+    byte[] witnessAccountAddress = header.getRawData().getWitnessAddress()
+        .toByteArray();
 
-    if (hasLegacy && hasPq) {
-      throw new ValidateSignatureException(
-          "witness_signature and pq_auth_sig are mutually exclusive");
-    }
-    if (!hasLegacy && !hasPq) {
-      throw new ValidateSignatureException("missing witness signature");
+    byte[] witnessPermissionAddress;
+    if (dynamicPropertiesStore.getAllowMultiSign() != 1) {
+      witnessPermissionAddress = witnessAccountAddress;
+    } else {
+      witnessPermissionAddress = accountStore.get(witnessAccountAddress)
+          .getWitnessPermissionAddress();
     }
 
-    byte[] witnessAccountAddress = header.getRawData().getWitnessAddress().toByteArray();
-    if (hasPq) {
-      return validatePQSignature(dynamicPropertiesStore, accountStore,
-          witnessAccountAddress, header.getPqAuthSig());
+    if (dynamicPropertiesStore.isAnyPqSchemeAllowed() && header.hasPqAuthSig()) {
+      return validatePQSignature(dynamicPropertiesStore, accountStore, witnessPermissionAddress,
+          header.getPqAuthSig());
     }
-    return validateLegacySignature(dynamicPropertiesStore, accountStore, witnessAccountAddress);
-  }
 
-  private boolean validateLegacySignature(DynamicPropertiesStore dynamicPropertiesStore,
-      AccountStore accountStore, byte[] witnessAccountAddress)
-      throws ValidateSignatureException {
     try {
       byte[] sigAddress = SignUtils.signatureToAddress(getRawHash().getBytes(),
-          TransactionCapsule.getBase64FromByteString(
-              block.getBlockHeader().getWitnessSignature()),
+          TransactionCapsule.getBase64FromByteString(header.getWitnessSignature()),
           CommonParameter.getInstance().isECKeyCryptoEngine());
-      if (dynamicPropertiesStore.getAllowMultiSign() != 1) {
-        return Arrays.equals(sigAddress, witnessAccountAddress);
-      }
-      AccountCapsule witnessAccount = accountStore.get(witnessAccountAddress);
-      if (witnessAccount == null) {
-        throw new ValidateSignatureException("witness account does not exist");
-      }
-      byte[] witnessPermissionAddress = witnessAccount.getWitnessPermissionAddress();
+
       return Arrays.equals(sigAddress, witnessPermissionAddress);
     } catch (SignatureException e) {
       throw new ValidateSignatureException(e.getMessage());
@@ -250,8 +234,11 @@ public class BlockCapsule implements ProtoCapsule<Block> {
    * the witness account's Witness Permission keys[].
    */
   private boolean validatePQSignature(DynamicPropertiesStore dynamicPropertiesStore,
-      AccountStore accountStore, byte[] witnessAccountAddress, PQAuthSig pqAuthSig)
+      AccountStore accountStore, byte[] witnessPermissionAddress, PQAuthSig pqAuthSig)
       throws ValidateSignatureException {
+    /*
+      Verify the PQ scheme is supported and proposal opened
+     */
     PQScheme scheme = pqAuthSig.getScheme();
     if (!PQSchemeRegistry.contains(scheme)) {
       throw new ValidateSignatureException(
@@ -262,38 +249,22 @@ public class BlockCapsule implements ProtoCapsule<Block> {
           "pq_auth_sig scheme " + scheme + " is not activated");
     }
 
-    AccountCapsule accountCapsule = accountStore.get(witnessAccountAddress);
-    Permission witnessPermission = null;
-    if (accountCapsule != null && accountCapsule.getInstance().hasWitnessPermission()) {
-      witnessPermission = accountCapsule.getInstance().getWitnessPermission();
-    }
-    if (witnessPermission == null || witnessPermission.getKeysCount() == 0) {
-      throw new ValidateSignatureException(
-          "pq_auth_sig present but witness permission is not configured");
-    }
-
     byte[] publicKey = pqAuthSig.getPublicKey().toByteArray();
     if (publicKey.length != PQSchemeRegistry.getPublicKeyLength(scheme)) {
       throw new ValidateSignatureException(
           "pq_auth_sig public key length mismatch for scheme " + scheme);
     }
+
+    byte[] derivedAddr = PQSchemeRegistry.computeAddress(scheme, publicKey);
+    if (!Arrays.equals(derivedAddr, witnessPermissionAddress)) {
+      throw new ValidateSignatureException(
+          "pq_auth_sig public key does not match witness permission address");
+    }
+
     byte[] signature = pqAuthSig.getSignature().toByteArray();
     if (!PQSchemeRegistry.isValidSignatureLength(scheme, signature.length)) {
       throw new ValidateSignatureException(
           "pq_auth_sig signature length mismatch for scheme " + scheme);
-    }
-
-    byte[] derivedAddr = PQSchemeRegistry.computeAddress(scheme, publicKey);
-    Key matched = null;
-    for (Key k : witnessPermission.getKeysList()) {
-      if (Arrays.equals(k.getAddress().toByteArray(), derivedAddr)) {
-        matched = k;
-        break;
-      }
-    }
-    if (matched == null) {
-      throw new ValidateSignatureException(
-          "pq_auth_sig public key does not match any witness permission key");
     }
 
     byte[] digest = getRawHash().getBytes();
@@ -419,10 +390,13 @@ public class BlockCapsule implements ProtoCapsule<Block> {
     return this.block.getBlockHeader().getRawData().getTimestamp();
   }
 
-  public boolean hasWitnessSignature() {
+  public boolean hasWitnessSignature(DynamicPropertiesStore dynamicPropertiesStore) {
     BlockHeader header = getInstance().getBlockHeader();
-    return !header.getWitnessSignature().isEmpty()
-        || !header.getPqAuthSig().getSignature().isEmpty();
+    boolean hasLegacySignature = !header.getWitnessSignature().isEmpty();
+    if (!dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
+      return hasLegacySignature;
+    }
+    return hasLegacySignature || !header.getPqAuthSig().getSignature().isEmpty();
   }
 
   @Override
