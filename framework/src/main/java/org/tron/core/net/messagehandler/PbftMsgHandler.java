@@ -5,23 +5,19 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.util.concurrent.Striped;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.consensus.base.Param;
 import org.tron.consensus.pbft.PbftManager;
 import org.tron.consensus.pbft.message.PbftBaseMessage;
 import org.tron.consensus.pbft.message.PbftMessage;
-import org.tron.core.ChainBaseManager;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.P2pException;
 import org.tron.core.net.TronNetDelegate;
 import org.tron.core.net.TronNetService;
 import org.tron.core.net.peer.PeerConnection;
 import org.tron.protos.Protocol.PBFTMessage.DataType;
-import org.tron.protos.Protocol.PQScheme;
 
-@Slf4j(topic = "pbft")
 @Component
 public class PbftMsgHandler {
 
@@ -35,9 +31,6 @@ public class PbftMsgHandler {
 
   @Autowired
   private TronNetDelegate tronNetDelegate;
-
-  @Autowired
-  private ChainBaseManager chainBaseManager;
 
   public void processMessage(PeerConnection peer, PbftMessage msg) throws Exception {
     if (!tronNetDelegate.allowPBFT()) {
@@ -56,14 +49,6 @@ public class PbftMsgHandler {
     if (msg.getDataType().equals(DataType.SRL)
         && currentEpoch - msg.getEpoch() > expireEpoch) {
       return;
-    }
-    if (msg.getPbftMessage().hasPqAuthSig()) {
-      PQScheme scheme = msg.getPbftMessage().getPqAuthSig().getScheme();
-      if (!chainBaseManager.getDynamicPropertiesStore().isPqSchemeAllowed(scheme)) {
-        logger.warn("Pbft message from {}, pq_auth_sig scheme {} is not activated on chain.",
-            peer.getInetAddress(), scheme);
-        return;
-      }
     }
     msg.analyzeSignature();
     String key = buildKey(msg);
