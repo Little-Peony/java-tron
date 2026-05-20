@@ -13,7 +13,7 @@ import org.tron.common.crypto.SignUtils;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.crypto.pqc.PQSignature;
 import org.tron.common.parameter.CommonParameter;
-import org.tron.common.utils.PqKeypair;
+import org.tron.common.crypto.pqc.PqKeypair;
 import org.tron.consensus.Consensus;
 import org.tron.consensus.base.Param;
 import org.tron.consensus.base.Param.Miner;

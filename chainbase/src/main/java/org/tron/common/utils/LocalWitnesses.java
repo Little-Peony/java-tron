@@ -26,6 +26,7 @@ import org.tron.common.crypto.ECKey;
 import org.tron.common.crypto.SignInterface;
 import org.tron.common.crypto.SignUtils;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
+import org.tron.common.crypto.pqc.PqKeypair;
 import org.tron.core.config.Parameter.ChainConstant;
 import org.tron.core.exception.TronError;
 import org.tron.protos.Protocol.PQScheme;

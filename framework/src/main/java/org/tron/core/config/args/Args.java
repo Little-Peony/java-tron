@@ -55,7 +55,7 @@ import org.tron.common.parameter.RateLimiterInitialization;
 import org.tron.common.setting.RocksDbSettings;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.LocalWitnesses;
-import org.tron.common.utils.PqKeypair;
+import org.tron.common.crypto.pqc.PqKeypair;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.config.Configuration;

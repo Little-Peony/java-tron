@@ -11,7 +11,7 @@ import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Commons;
 import org.tron.common.utils.LocalWitnesses;
-import org.tron.common.utils.PqKeypair;
+import org.tron.common.crypto.pqc.PqKeypair;
 import org.tron.core.exception.CipherException;
 import org.tron.core.exception.TronError;
 import org.tron.keystore.Credentials;
