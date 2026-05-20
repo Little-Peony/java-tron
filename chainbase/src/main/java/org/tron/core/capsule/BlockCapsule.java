@@ -212,7 +212,16 @@ public class BlockCapsule implements ProtoCapsule<Block> {
           .getWitnessPermissionAddress();
     }
 
-    if (dynamicPropertiesStore.isAnyPqSchemeAllowed() && header.hasPqAuthSig()) {
+    if (dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
+      boolean hasLegacy = !header.getWitnessSignature().isEmpty();
+      boolean hasPq = header.hasPqAuthSig();
+      if (hasLegacy && hasLegacy) {
+        throw new ValidateSignatureException(
+            "witness_signature and pq_auth_sig are mutually exclusive");
+      }
+      if (!hasLegacy && !hasPq) {
+        throw new ValidateSignatureException("missing witness signature");
+      }
       return validatePQSignature(dynamicPropertiesStore, accountStore, witnessPermissionAddress,
           header.getPqAuthSig());
     }
