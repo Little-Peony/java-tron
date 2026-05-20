@@ -222,27 +222,28 @@ public class TransactionUtil {
           }
         }
         tswBuilder.setPermission(permission);
-        if (trx.getSignatureCount() > 0 || trx.getPqAuthSigCount() > 0) {
-          List<ByteString> approveList = new ArrayList<>();
-          long currentWeight = 0L;
-          if (trx.getSignatureCount() > 0) {
-            currentWeight = TransactionCapsule.checkWeight(permission, trx.getSignatureList(),
-                Sha256Hash.hash(CommonParameter.getInstance()
-                    .isECKeyCryptoEngine(), trx.getRawData().toByteArray()), approveList);
-          }
-          if (trx.getPqAuthSigCount() > 0) {
-            java.util.Set<ByteString> signedAddresses = new java.util.HashSet<>(approveList);
-            try {
-              currentWeight = StrictMathWrapper.addExact(currentWeight,
-                  TransactionCapsule.validatePQSignature(trx, permission, signedAddresses,
-                      chainBaseManager.getDynamicPropertiesStore(), approveList));
-            } catch (ArithmeticException e) {
-              throw new PermissionException("weight overflow");
-            }
-          }
-          tswBuilder.addAllApprovedList(approveList);
-          tswBuilder.setCurrentWeight(currentWeight);
+        long currentWeight = 0L;
+        List<ByteString> approveList = new ArrayList<>();
+        if (trx.getSignatureCount() > 0 ) {
+          currentWeight = TransactionCapsule.checkWeight(permission, trx.getSignatureList(),
+              Sha256Hash.hash(CommonParameter.getInstance()
+                  .isECKeyCryptoEngine(), trx.getRawData().toByteArray()), approveList);
         }
+        if (chainBaseManager.getDynamicPropertiesStore().isAnyPqSchemeAllowed()
+            && trx.getPqAuthSigCount() > 0) {
+          try {
+            long pqWeight = TransactionCapsule.validatePQSignatureGetWeight(trx, permission,
+                chainBaseManager.getDynamicPropertiesStore(), approveList);
+            // sum all signature weight
+            currentWeight = StrictMathWrapper.addExact(currentWeight,pqWeight);
+          } catch (ArithmeticException e) {
+            throw new PermissionException("weight overflow");
+          }
+        }
+
+        tswBuilder.addAllApprovedList(approveList);
+        tswBuilder.setCurrentWeight(currentWeight);
+
         if (tswBuilder.getCurrentWeight() >= permission.getThreshold()) {
           resultBuilder.setCode(Result.response_code.ENOUGH_PERMISSION);
         } else {

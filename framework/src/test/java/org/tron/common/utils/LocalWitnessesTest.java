@@ -10,6 +10,7 @@ import org.bouncycastle.util.encoders.Hex;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.tron.common.crypto.pqc.FNDSA512;
+import org.tron.common.crypto.pqc.PqKeypair;
 import org.tron.core.exception.TronError;
 import org.tron.protos.Protocol.PQScheme;
 
@@ -36,27 +37,18 @@ public class LocalWitnessesTest {
   @Test
   public void fnDsa512AcceptsValidKeypair() {
     LocalWitnesses lw = new LocalWitnesses();
-    lw.setPqKeypairs(Collections.singletonList(priv), Collections.singletonList(pub));
+    lw.setPqKeypairs(Collections.singletonList(new PqKeypair(priv, pub)));
     assertEquals(PQScheme.FN_DSA_512, lw.getPqScheme());
-    assertEquals(1, lw.getPqPrivateKeys().size());
-    assertEquals(1, lw.getPqPublicKeys().size());
+    assertEquals(1, lw.getPqKeypairs().size());
   }
 
   @Test
   public void fnDsa512AcceptsMultipleKeypairs() {
     LocalWitnesses lw = new LocalWitnesses();
-    lw.setPqKeypairs(Arrays.asList(priv, priv2), Arrays.asList(pub, pub2));
-    assertEquals(2, lw.getPqPrivateKeys().size());
-    assertEquals(2, lw.getPqPublicKeys().size());
-  }
-
-  @Test
-  public void mismatchedListSizesRejected() {
-    LocalWitnesses lw = new LocalWitnesses();
-    TronError err = assertThrows(TronError.class,
-        () -> lw.setPqKeypairs(Arrays.asList(priv, priv2), Collections.singletonList(pub)));
-    assertEquals(TronError.ErrCode.WITNESS_INIT, err.getErrCode());
-    assertTrue(err.getMessage().contains("size mismatch"));
+    lw.setPqKeypairs(Arrays.asList(
+        new PqKeypair(priv, pub),
+        new PqKeypair(priv2, pub2)));
+    assertEquals(2, lw.getPqKeypairs().size());
   }
 
   @Test
@@ -64,8 +56,7 @@ public class LocalWitnessesTest {
     LocalWitnesses lw = new LocalWitnesses();
     String shortPriv = priv.substring(2);
     TronError err = assertThrows(TronError.class,
-        () -> lw.setPqKeypairs(Collections.singletonList(shortPriv),
-            Collections.singletonList(pub)));
+        () -> lw.setPqKeypairs(Collections.singletonList(new PqKeypair(shortPriv, pub))));
     assertEquals(TronError.ErrCode.WITNESS_INIT, err.getErrCode());
     assertTrue(err.getMessage().contains("PQ private key"));
     // FN-DSA-512 private key is 1280 bytes = 2560 hex chars.
@@ -77,8 +68,7 @@ public class LocalWitnessesTest {
     LocalWitnesses lw = new LocalWitnesses();
     String shortPub = pub.substring(2);
     TronError err = assertThrows(TronError.class,
-        () -> lw.setPqKeypairs(Collections.singletonList(priv),
-            Collections.singletonList(shortPub)));
+        () -> lw.setPqKeypairs(Collections.singletonList(new PqKeypair(priv, shortPub))));
     assertEquals(TronError.ErrCode.WITNESS_INIT, err.getErrCode());
     assertTrue(err.getMessage().contains("PQ public key"));
     // FN-DSA-512 public key is 896 bytes = 1792 hex chars.
@@ -90,8 +80,7 @@ public class LocalWitnessesTest {
     LocalWitnesses lw = new LocalWitnesses();
     String badPriv = "zz" + priv.substring(2);
     TronError err = assertThrows(TronError.class,
-        () -> lw.setPqKeypairs(Collections.singletonList(badPriv),
-            Collections.singletonList(pub)));
+        () -> lw.setPqKeypairs(Collections.singletonList(new PqKeypair(badPriv, pub))));
     assertEquals(TronError.ErrCode.WITNESS_INIT, err.getErrCode());
     assertTrue(err.getMessage().contains("hex"));
   }
@@ -123,10 +112,9 @@ public class LocalWitnessesTest {
   @Test
   public void emptyKeypairsAreNoop() {
     LocalWitnesses lw = new LocalWitnesses();
-    lw.setPqKeypairs(Collections.emptyList(), Collections.emptyList());
-    lw.setPqKeypairs(null, null);
-    assertEquals(0, lw.getPqPrivateKeys().size());
-    assertEquals(0, lw.getPqPublicKeys().size());
+    lw.setPqKeypairs(Collections.emptyList());
+    lw.setPqKeypairs(null);
+    assertEquals(0, lw.getPqKeypairs().size());
   }
 
   @Test
@@ -134,18 +122,15 @@ public class LocalWitnessesTest {
     // validatePqKey strips a leading "0x" before measuring the length, so
     // hex strings with the prefix must be accepted.
     LocalWitnesses lw = new LocalWitnesses();
-    lw.setPqKeypairs(
-        Collections.singletonList("0x" + priv),
-        Collections.singletonList("0x" + pub));
-    assertEquals(1, lw.getPqPrivateKeys().size());
+    lw.setPqKeypairs(Collections.singletonList(new PqKeypair("0x" + priv, "0x" + pub)));
+    assertEquals(1, lw.getPqKeypairs().size());
   }
 
   @Test
   public void blankKeyRejected() {
     LocalWitnesses lw = new LocalWitnesses();
     TronError err = assertThrows(TronError.class,
-        () -> lw.setPqKeypairs(Collections.singletonList(""),
-            Collections.singletonList(pub)));
+        () -> lw.setPqKeypairs(Collections.singletonList(new PqKeypair("", pub))));
     assertEquals(TronError.ErrCode.WITNESS_INIT, err.getErrCode());
     assertTrue(err.getMessage().contains("PQ private key"));
   }

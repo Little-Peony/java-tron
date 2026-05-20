@@ -26,6 +26,7 @@ import org.tron.common.crypto.ECKey;
 import org.tron.common.crypto.SignInterface;
 import org.tron.common.crypto.SignUtils;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
+import org.tron.common.crypto.pqc.PqKeypair;
 import org.tron.core.config.Parameter.ChainConstant;
 import org.tron.core.exception.TronError;
 import org.tron.protos.Protocol.PQScheme;
@@ -37,9 +38,10 @@ public class LocalWitnesses {
   private List<String> privateKeys = Lists.newArrayList();
 
   /**
-   * Pre-derived PQ private keys in hex format, one per witness. The expected
-   * byte length depends on {@link #pqScheme}: 1280 bytes (2560 hex chars) for
-   * FN-DSA-512. Index-aligned with {@link #pqPublicKeys}.
+   * Pre-derived PQ keypairs (private + public, hex), one per witness. The
+   * expected byte lengths depend on {@link #pqScheme}: for FN-DSA-512 each
+   * private key is 1280 bytes (2560 hex chars) and each public key is 896
+   * bytes (1792 hex chars).
    *
    * <p>Configured directly (rather than derived from a seed on the node) so
    * the runtime path is not exposed to potential cross-platform floating-point
@@ -47,17 +49,9 @@ public class LocalWitnesses {
    * off-line and ship both halves to the node.
    */
   @Getter
-  private List<String> pqPrivateKeys = Lists.newArrayList();
+  private List<PqKeypair> pqKeypairs = Lists.newArrayList();
 
-  /**
-   * PQ public keys in hex format, one per witness. The expected byte length
-   * depends on {@link #pqScheme}: 896 bytes (1792 hex chars) for FN-DSA-512.
-   * Index-aligned with {@link #pqPrivateKeys}.
-   */
-  @Getter
-  private List<String> pqPublicKeys = Lists.newArrayList();
-
-  /** PQ signature scheme used by the configured {@link #pqPrivateKeys}. */
+  /** PQ signature scheme used by the configured {@link #pqKeypairs}. */
   @Getter
   private PQScheme pqScheme = PQScheme.FN_DSA_512;
 
@@ -134,32 +128,22 @@ public class LocalWitnesses {
 
   /**
    * Pre-derived PQ keypairs (priv + pub) used as signing keys under
-   * {@link #pqScheme}. The two lists must be the same length and index-aligned;
-   * each entry must be a hex string whose byte length matches the scheme's
-   * required private/public key size. Callers must therefore set the scheme
-   * via {@link #setPqScheme(PQScheme)} before calling this method when
-   * targeting a non-default scheme.
+   * {@link #pqScheme}. Each entry's private/public hex byte length must match
+   * the scheme's required size. Callers must therefore set the scheme via
+   * {@link #setPqScheme(PQScheme)} before calling this method when targeting a
+   * non-default scheme.
    */
-  public void setPqKeypairs(final List<String> pqPrivateKeys,
-      final List<String> pqPublicKeys) {
-    int privCount = CollectionUtils.isEmpty(pqPrivateKeys) ? 0 : pqPrivateKeys.size();
-    int pubCount = CollectionUtils.isEmpty(pqPublicKeys) ? 0 : pqPublicKeys.size();
-    if (privCount == 0 && pubCount == 0) {
+  public void setPqKeypairs(final List<PqKeypair> pqKeypairs) {
+    if (CollectionUtils.isEmpty(pqKeypairs)) {
       return;
-    }
-    if (privCount != pubCount) {
-      throw new TronError(String.format(
-          "PQ keypair list size mismatch: priv=%d, pub=%d", privCount, pubCount),
-          TronError.ErrCode.WITNESS_INIT);
     }
     int expectedPrivLen = PQSchemeRegistry.getPrivateKeyLength(pqScheme);
     int expectedPubLen = PQSchemeRegistry.getPublicKeyLength(pqScheme);
-    for (int i = 0; i < privCount; i++) {
-      validatePqKey(pqPrivateKeys.get(i), expectedPrivLen, "PQ private key");
-      validatePqKey(pqPublicKeys.get(i), expectedPubLen, "PQ public key");
+    for (PqKeypair kp : pqKeypairs) {
+      validatePqKey(kp.getPrivateKey(), expectedPrivLen, "PQ private key");
+      validatePqKey(kp.getPublicKey(), expectedPubLen, "PQ public key");
     }
-    this.pqPrivateKeys = pqPrivateKeys;
-    this.pqPublicKeys = pqPublicKeys;
+    this.pqKeypairs = pqKeypairs;
   }
 
   private static void validatePqKey(String key, int expectedLen, String label) {
