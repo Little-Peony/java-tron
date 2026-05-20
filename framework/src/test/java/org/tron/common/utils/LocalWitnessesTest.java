@@ -10,6 +10,7 @@ import org.bouncycastle.util.encoders.Hex;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.tron.common.crypto.pqc.FNDSA512;
+import org.tron.common.crypto.pqc.PqKeypair;
 import org.tron.core.exception.TronError;
 import org.tron.protos.Protocol.PQScheme;
 
