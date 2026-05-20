@@ -3,6 +3,7 @@ package org.tron.common.crypto.pqc;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Set;
 import org.tron.common.crypto.Hash;
 import org.tron.protos.Protocol.PQScheme;
 
@@ -122,6 +123,17 @@ public final class PQSchemeRegistry {
   public static boolean contains(PQScheme scheme) {
     PQScheme resolved = resolve(scheme);
     return resolved != null && SCHEMES.containsKey(resolved);
+  }
+
+  /**
+   * Returns the set of post-quantum schemes that are registered (i.e. have an
+   * active {@link SignatureOps} entry). Lets governance / config layers
+   * enumerate "all PQ schemes" without hard-coding the list — adding a new
+   * scheme to the registry then auto-propagates to any caller iterating over
+   * this set.
+   */
+  public static Set<PQScheme> registeredSchemes() {
+    return SCHEMES.keySet();
   }
 
   public static int getPrivateKeyLength(PQScheme scheme) {
