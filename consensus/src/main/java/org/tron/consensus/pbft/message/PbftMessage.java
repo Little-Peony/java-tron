@@ -4,19 +4,15 @@ import com.google.protobuf.ByteString;
 import java.util.List;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.crypto.ECKey.ECDSASignature;
-import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.consensus.base.Param;
 import org.tron.consensus.base.Param.Miner;
-import org.tron.consensus.base.Param.MinerType;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.net.message.MessageTypes;
 import org.tron.protos.Protocol.PBFTMessage;
 import org.tron.protos.Protocol.PBFTMessage.DataType;
 import org.tron.protos.Protocol.PBFTMessage.MsgType;
 import org.tron.protos.Protocol.PBFTMessage.Raw;
-import org.tron.protos.Protocol.PQAuthSig;
-import org.tron.protos.Protocol.PQScheme;
 import org.tron.protos.Protocol.SRL;
 
 public class PbftMessage extends PbftBaseMessage {
@@ -60,13 +56,15 @@ public class PbftMessage extends PbftBaseMessage {
   private static PbftMessage buildCommon(DataType dataType, ByteString data, BlockCapsule block,
       long epoch, long viewN, Miner miner) {
     PbftMessage pbftMessage = new PbftMessage();
+    ECKey ecKey = ECKey.fromPrivate(miner.getPrivateKey());
     Raw.Builder rawBuilder = Raw.newBuilder();
     PBFTMessage.Builder builder = PBFTMessage.newBuilder();
     rawBuilder.setViewN(viewN).setEpoch(epoch).setDataType(dataType)
         .setMsgType(MsgType.PREPREPARE).setData(data);
     Raw raw = rawBuilder.build();
     byte[] hash = Sha256Hash.hash(true, raw.toByteArray());
-    signRaw(builder, raw, hash, miner);
+    ECDSASignature signature = ecKey.sign(hash);
+    builder.setRawData(raw).setSignature(ByteString.copyFrom(signature.toByteArray()));
     PBFTMessage message = builder.build();
     pbftMessage.setType(MessageTypes.PBFT_MSG.asByte())
         .setPbftMessage(message).setData(message.toByteArray()).setSwitch(block.isSwitch());
@@ -98,6 +96,7 @@ public class PbftMessage extends PbftBaseMessage {
 
   private PbftMessage buildMessageCapsule(MsgType type, Miner miner) {
     PbftMessage pbftMessage = new PbftMessage();
+    ECKey ecKey = ECKey.fromPrivate(miner.getPrivateKey());
     PBFTMessage.Builder builder = PBFTMessage.newBuilder();
     Raw.Builder rawBuilder = Raw.newBuilder();
     rawBuilder.setViewN(getPbftMessage().getRawData().getViewN())
@@ -106,30 +105,11 @@ public class PbftMessage extends PbftBaseMessage {
         .setData(getPbftMessage().getRawData().getData());
     Raw raw = rawBuilder.build();
     byte[] hash = Sha256Hash.hash(true, raw.toByteArray());
-    signRaw(builder, raw, hash, miner);
+    ECDSASignature signature = ecKey.sign(hash);
+    builder.setRawData(raw).setSignature(ByteString.copyFrom(signature.toByteArray()));
     PBFTMessage message = builder.build();
     pbftMessage.setType(getType().asByte())
         .setPbftMessage(message).setData(message.toByteArray());
     return pbftMessage;
-  }
-
-  private static void signRaw(PBFTMessage.Builder builder, Raw raw, byte[] hash, Miner miner) {
-    builder.setRawData(raw);
-    if (miner.getType() == MinerType.PQ) {
-      PQScheme scheme = miner.getPqScheme();
-      byte[] sk = miner.getPQPrivateKey();
-      byte[] pk = miner.getPQPublicKey();
-      byte[] sig = PQSchemeRegistry.sign(scheme, sk, hash);
-      builder.setPqAuthSig(PQAuthSig.newBuilder()
-              .setScheme(scheme)
-              .setPublicKey(ByteString.copyFrom(pk))
-              .setSignature(ByteString.copyFrom(sig)))
-          .clearSignature();
-    } else {
-      ECKey ecKey = ECKey.fromPrivate(miner.getPrivateKey());
-      ECDSASignature signature = ecKey.sign(hash);
-      builder.setSignature(ByteString.copyFrom(signature.toByteArray()))
-          .clearPqAuthSig();
-    }
   }
 }

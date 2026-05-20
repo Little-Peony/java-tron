@@ -5,13 +5,13 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Sets;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
+import io.netty.util.internal.ConcurrentSet;
 import java.io.Closeable;
 import java.security.SignatureException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -19,7 +19,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.tron.common.crypto.ECKey;
-import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.es.ExecutorServiceManager;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
@@ -34,8 +33,6 @@ import org.tron.core.net.message.pbft.PbftCommitMessage;
 import org.tron.core.net.peer.PeerConnection;
 import org.tron.protos.Protocol.PBFTMessage.DataType;
 import org.tron.protos.Protocol.PBFTMessage.Raw;
-import org.tron.protos.Protocol.PQAuthSig;
-import org.tron.protos.Protocol.PQScheme;
 
 @Slf4j(topic = "pbft-data-sync")
 @Service
@@ -105,7 +102,6 @@ public class PbftDataSyncHandler implements TronMsgHandler, Closeable {
       PbftSignDataStore pbftSignDataStore = chainBaseManager.getPbftSignDataStore();
       Raw raw = Raw.parseFrom(pbftCommitMessage.getPBFTCommitResult().getData());
       if (!validPbftSign(raw, pbftCommitMessage.getPBFTCommitResult().getSignatureList(),
-          pbftCommitMessage.getPBFTCommitResult().getPqSignatureList(),
           chainBaseManager.getWitnesses())) {
         return;
       }
@@ -124,38 +120,35 @@ public class PbftDataSyncHandler implements TronMsgHandler, Closeable {
   }
 
   private boolean validPbftSign(Raw raw, List<ByteString> srSignList,
-      List<PQAuthSig> pqSignList, List<ByteString> currentSrList) {
-    int totalSigs = srSignList.size() + pqSignList.size();
-    if (totalSigs == 0) {
-      return true;
-    }
-    byte[] dataHash = Sha256Hash.hash(true, raw.toByteArray());
-    Set<ByteString> srSet = Sets.newHashSet(currentSrList);
-    Set<ByteString> verifiedSigners = ConcurrentHashMap.newKeySet();
-    List<Future<Boolean>> futureList = new ArrayList<>();
-    for (ByteString sign : srSignList) {
-      futureList.add(executorService.submit(
-          new ValidPbftSignTask(raw.getViewN(), verifiedSigners, dataHash, srSet, sign)));
-    }
-    for (PQAuthSig pqSign : pqSignList) {
-      futureList.add(executorService.submit(
-          new ValidPqPbftSignTask(raw.getViewN(), verifiedSigners, dataHash, srSet, pqSign)));
-    }
-    for (Future<Boolean> future : futureList) {
-      try {
-        if (!future.get()) {
-          return false;
-        }
-      } catch (Exception e) {
-        logger.error("", e);
+      List<ByteString> currentSrList) {
+    //valid sr list
+    if (srSignList.size() != 0) {
+      Set<ByteString> srSignSet = new ConcurrentSet();
+      srSignSet.addAll(srSignList);
+      if (srSignSet.size() < Param.getInstance().getAgreeNodeCount()) {
+        logger.error("sr sign count {} < sr count * 2/3 + 1 == {}", srSignSet.size(),
+            Param.getInstance().getAgreeNodeCount());
         return false;
       }
-    }
-    int unique = verifiedSigners.size();
-    if (unique < Param.getInstance().getAgreeNodeCount()) {
-      logger.error("sr sign count {} < sr count * 2/3 + 1 == {}", unique,
-          Param.getInstance().getAgreeNodeCount());
-      return false;
+      byte[] dataHash = Sha256Hash.hash(true, raw.toByteArray());
+      Set<ByteString> srSet = Sets.newHashSet(currentSrList);
+      List<Future<Boolean>> futureList = new ArrayList<>();
+      for (ByteString sign : srSignList) {
+        futureList.add(executorService.submit(
+            new ValidPbftSignTask(raw.getViewN(), srSignSet, dataHash, srSet, sign)));
+      }
+      for (Future<Boolean> future : futureList) {
+        try {
+          if (!future.get()) {
+            return false;
+          }
+        } catch (Exception e) {
+          logger.error("", e);
+        }
+      }
+      if (srSignSet.size() != 0) {
+        return false;
+      }
     }
     return true;
   }
@@ -163,15 +156,15 @@ public class PbftDataSyncHandler implements TronMsgHandler, Closeable {
   private class ValidPbftSignTask implements Callable<Boolean> {
 
     private long viewN;
-    private Set<ByteString> verifiedSigners;
+    private Set<ByteString> srSignSet;
     private byte[] dataHash;
     private Set<ByteString> srSet;
     private ByteString sign;
 
-    ValidPbftSignTask(long viewN, Set<ByteString> verifiedSigners,
+    ValidPbftSignTask(long viewN, Set<ByteString> srSignSet,
         byte[] dataHash, Set<ByteString> srSet, ByteString sign) {
       this.viewN = viewN;
-      this.verifiedSigners = verifiedSigners;
+      this.srSignSet = srSignSet;
       this.dataHash = dataHash;
       this.srSet = srSet;
       this.sign = sign;
@@ -182,71 +175,16 @@ public class PbftDataSyncHandler implements TronMsgHandler, Closeable {
       try {
         byte[] srAddress = ECKey.signatureToAddress(dataHash,
             TransactionCapsule.getBase64FromByteString(sign));
-        ByteString addressKey = ByteString.copyFrom(srAddress);
-        if (!srSet.contains(addressKey)) {
+        if (!srSet.contains(ByteString.copyFrom(srAddress))) {
           logger.error("valid sr signature fail,error sr address:{}",
               ByteArray.toHexString(srAddress));
           return false;
         }
-        verifiedSigners.add(addressKey);
+        srSignSet.remove(sign);
       } catch (SignatureException e) {
         logger.error("viewN {} valid sr list sign fail!", viewN, e);
         return false;
       }
-      return true;
-    }
-  }
-
-  private class ValidPqPbftSignTask implements Callable<Boolean> {
-
-    private final long viewN;
-    private final Set<ByteString> verifiedSigners;
-    private final byte[] dataHash;
-    private final Set<ByteString> srSet;
-    private final PQAuthSig pqAuthSig;
-
-    ValidPqPbftSignTask(long viewN, Set<ByteString> verifiedSigners,
-        byte[] dataHash, Set<ByteString> srSet, PQAuthSig pqAuthSig) {
-      this.viewN = viewN;
-      this.verifiedSigners = verifiedSigners;
-      this.dataHash = dataHash;
-      this.srSet = srSet;
-      this.pqAuthSig = pqAuthSig;
-    }
-
-    @Override
-    public Boolean call() {
-      PQScheme scheme = pqAuthSig.getScheme();
-      if (!chainBaseManager.getDynamicPropertiesStore().isPqSchemeAllowed(scheme)) {
-        logger.error("viewN {} pq scheme {} not activated on chain", viewN, scheme);
-        return false;
-      }
-      if (!PQSchemeRegistry.contains(scheme)) {
-        logger.error("viewN {} pq scheme {} not registered locally", viewN, scheme);
-        return false;
-      }
-      byte[] publicKey = pqAuthSig.getPublicKey().toByteArray();
-      if (publicKey.length != PQSchemeRegistry.getPublicKeyLength(scheme)) {
-        logger.error("viewN {} pq public key length mismatch for {}", viewN, scheme);
-        return false;
-      }
-      byte[] signature = pqAuthSig.getSignature().toByteArray();
-      if (!PQSchemeRegistry.isValidSignatureLength(scheme, signature.length)) {
-        logger.error("viewN {} pq signature length mismatch for {}", viewN, scheme);
-        return false;
-      }
-      if (!PQSchemeRegistry.verify(scheme, publicKey, dataHash, signature)) {
-        logger.error("viewN {} pq signature verification failed for {}", viewN, scheme);
-        return false;
-      }
-      byte[] srAddress = PQSchemeRegistry.computeAddress(scheme, publicKey);
-      ByteString addressKey = ByteString.copyFrom(srAddress);
-      if (!srSet.contains(addressKey)) {
-        logger.error("valid sr pq signature fail, error sr address:{}",
-            ByteArray.toHexString(srAddress));
-        return false;
-      }
-      verifiedSigners.add(addressKey);
       return true;
     }
   }

@@ -920,26 +920,12 @@ message PBFTMessage {
     bytes data = 5;
   }
   Raw raw_data = 1;
-  // Legacy ECDSA signature over Sha256Hash(raw_data). Mutually exclusive with
-  // pq_auth_sig — exactly one of the two must be set per pbft message.
   bytes signature = 2;
-  // Post-quantum auth signature over Sha256Hash(raw_data). Set instead of
-  // `signature` when the local witness is PQ-only. Verifier only accepts
-  // this field after the corresponding PQ scheme is activated on chain.
-  PQAuthSig pq_auth_sig = 3;
 }
 
 message PBFTCommitResult {
   bytes data = 1;
-  // Legacy ECDSA commit signatures recoverable to a SR address via the
-  // signed `data` hash. May coexist with `pq_signature` when a quorum
-  // includes both ECDSA and PQ-only witnesses; the total of the two
-  // lists must meet the agreement threshold.
   repeated bytes signature = 2;
-  // Post-quantum commit signatures contributed by PQ-only witnesses.
-  // Verifiers must reject any pq_signature entry whose scheme is not
-  // activated on chain.
-  repeated PQAuthSig pq_signature = 3;
 }
 
 message SRL {
