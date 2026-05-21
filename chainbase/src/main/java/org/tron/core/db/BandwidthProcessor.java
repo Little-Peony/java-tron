@@ -142,7 +142,9 @@ public class BandwidthProcessor extends ResourceProcessor {
           long maxCreateAccountTxSize = dynamicPropertiesStore.getMaxCreateAccountTxSize();
           int signatureCount = trx.getInstance().getSignatureCount();
           long sigOverhead = signatureCount * PER_SIGN_LENGTH;
-          if (dynamicPropertiesStore.isAnyPqSchemeAllowed() && trx.getInstance().getPqAuthSigCount() > 0) {
+
+          // PQAuthSig bytes are subtracted as signature overhead regardless of open or not
+          if (trx.getInstance().getPqAuthSigCount() > 0) {
             long pqAuthSigBytes = 0L;
             for (PQAuthSig pqAuthSig : trx.getInstance().getPqAuthSigList()) {
               pqAuthSigBytes += pqAuthSig.getSerializedSize();

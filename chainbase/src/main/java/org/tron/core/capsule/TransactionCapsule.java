@@ -800,7 +800,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
           validatePubSignature(accountStore, dynamicPropertiesStore);
         } else { //transfer from shielded address
           if (this.transaction.getSignatureCount() > 0
-              || (dynamicPropertiesStore.isAnyPqSchemeAllowed() && this.transaction.getPqAuthSigCount() > 0)) {
+              || (this.transaction.getPqAuthSigCount() > 0)) {
             throw new ValidateSignatureException("there should be no signatures signed by "
                     + "transparent address when transfer from shielded address");
           }

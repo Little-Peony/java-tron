@@ -1748,7 +1748,7 @@ public class Manager {
 
     blockCapsule.setMerkleRoot();
     if (getDynamicPropertiesStore().isAnyPqSchemeAllowed() &&
-        miner.getType() != Param.MinerType.ECDSA) {
+        miner.getPqScheme() != null) {
       signBlockCapsuleWithPQ(blockCapsule, miner);
     } else {
       blockCapsule.sign(miner.getPrivateKey());
@@ -1769,10 +1769,6 @@ public class Manager {
   }
 
   private void signBlockCapsuleWithPQ(BlockCapsule blockCapsule, Miner miner) {
-    if (miner.getType() != Param.MinerType.PQ) {
-      throw new IllegalStateException("unknown PQ miner type: " + miner.getType());
-    }
-
     PQScheme scheme = miner.getPqScheme();
     if (scheme == null || !PQSchemeRegistry.contains(scheme)) {
       throw new IllegalStateException(
