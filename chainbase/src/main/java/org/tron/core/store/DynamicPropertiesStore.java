@@ -16,6 +16,7 @@ import org.joda.time.DateTime;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
@@ -3101,9 +3102,20 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
     return getAllowFnDsa512() == 1L;
   }
 
-  /** Returns true iff at least one post-quantum signature scheme is currently activated. */
+  /**
+   * Returns true iff at least one post-quantum signature scheme is currently
+   * activated. Driven by {@link PQSchemeRegistry#registeredSchemes()} so that
+   * adding a new scheme to the registry (and its corresponding case in
+   * {@link #isPqSchemeAllowed}) automatically propagates here — no manual edit
+   * needed.
+   */
   public boolean isAnyPqSchemeAllowed() {
-    return allowFnDsa512();
+    for (PQScheme scheme : PQSchemeRegistry.registeredSchemes()) {
+      if (isPqSchemeAllowed(scheme)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

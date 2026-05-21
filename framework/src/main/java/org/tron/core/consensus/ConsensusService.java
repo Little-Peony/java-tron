@@ -106,7 +106,6 @@ public class ConsensusService {
         miner.setPQPrivateKey(sk);
         miner.setPQPublicKey(pk);
         miner.setPqScheme(scheme);
-        miner.setType(Param.MinerType.PQ);
         miners.add(miner);
         logger.info("Add {} witness (from configured keypair): {}, size: {}",
             scheme, Hex.toHexString(pqAddress), miners.size());
@@ -145,7 +144,6 @@ public class ConsensusService {
     miner.setPQPrivateKey(sk);
     miner.setPQPublicKey(pk);
     miner.setPqScheme(scheme);
-    miner.setType(Param.MinerType.PQ);
     logger.info("Add {} witness (from configured keypair): {}",
         scheme, Hex.toHexString(witnessAddress));
     return miner;

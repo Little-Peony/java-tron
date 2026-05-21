@@ -23,6 +23,7 @@ import org.tron.core.exception.AccountResourceInsufficientException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.TooBigTransactionException;
 import org.tron.core.exception.TooBigTransactionResultException;
+import org.tron.protos.Protocol.PQAuthSig;
 import org.tron.protos.Protocol.Transaction.Contract;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
@@ -141,11 +142,12 @@ public class BandwidthProcessor extends ResourceProcessor {
           long maxCreateAccountTxSize = dynamicPropertiesStore.getMaxCreateAccountTxSize();
           int signatureCount = trx.getInstance().getSignatureCount();
           long sigOverhead = signatureCount * PER_SIGN_LENGTH;
+
+          // PQAuthSig bytes are subtracted as signature overhead regardless of open or not
           if (trx.getInstance().getPqAuthSigCount() > 0) {
             long pqAuthSigBytes = 0L;
-            for (org.tron.protos.Protocol.PQAuthSig aw
-                : trx.getInstance().getPqAuthSigList()) {
-              pqAuthSigBytes += aw.getSerializedSize();
+            for (PQAuthSig pqAuthSig : trx.getInstance().getPqAuthSigList()) {
+              pqAuthSigBytes += pqAuthSig.getSerializedSize();
             }
             sigOverhead += pqAuthSigBytes;
           }

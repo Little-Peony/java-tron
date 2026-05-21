@@ -86,6 +86,7 @@ import org.tron.common.utils.Sha256Hash;
 import org.tron.common.utils.StringUtil;
 import org.tron.common.zksnark.MerkleContainer;
 import org.tron.consensus.Consensus;
+import org.tron.consensus.base.Param;
 import org.tron.consensus.base.Param.Miner;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Constant;
@@ -1746,7 +1747,12 @@ public class Manager {
     session.reset();
 
     blockCapsule.setMerkleRoot();
-    signBlockCapsule(blockCapsule, miner);
+    if (getDynamicPropertiesStore().isAnyPqSchemeAllowed() &&
+        miner.getPqScheme() != null) {
+      signBlockCapsuleWithPQ(blockCapsule, miner);
+    } else {
+      blockCapsule.sign(miner.getPrivateKey());
+    }
 
     BlockCapsule capsule = new BlockCapsule(blockCapsule.getInstance());
     capsule.generatedByMyself = true;
@@ -1762,57 +1768,23 @@ public class Manager {
     return capsule;
   }
 
-  private void signBlockCapsule(BlockCapsule blockCapsule, Miner miner) {
-    switch (miner.getType()) {
-      case PQ:
-        PQScheme scheme = resolveWitnessScheme(miner);
-        if (scheme == null) {
-          // PQ-only miner whose configured scheme is not currently usable
-          // (proposal not activated, scheme allow flag flipped, witness
-          // permission missing, etc.). Surface a clear cause; DposTask's
-          // Throwable handler will log and the witness will miss this slot,
-          // but the producer thread keeps running.
-          throw new IllegalStateException(
-              "PQ-only miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
-                  + " has scheme " + miner.getPqScheme()
-                  + " configured but it is not currently usable "
-                  + "(scheme not allowed by dynamic properties, "
-                  + "or witness permission is missing/empty)");
-        }
-        signWitnessAuth(blockCapsule, miner, scheme);
-        break;
-      case ECDSA:
-        blockCapsule.sign(miner.getPrivateKey());
-        break;
-      default:
-        throw new IllegalStateException("unknown miner type: " + miner.getType());
-    }
-  }
-
-  private PQScheme resolveWitnessScheme(Miner miner) {
-    if (!chainBaseManager.getDynamicPropertiesStore().isAnyPqSchemeAllowed()) {
-      return null;
-    }
+  private void signBlockCapsuleWithPQ(BlockCapsule blockCapsule, Miner miner) {
     PQScheme scheme = miner.getPqScheme();
     if (scheme == null || !PQSchemeRegistry.contains(scheme)) {
-      return null;
+      throw new IllegalStateException(
+          "PQ-only miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
+              + " has scheme " + miner.getPqScheme()
+              + " configured but it is not currently usable "
+              + "or witness permission is missing/empty)");
     }
     if (!chainBaseManager.getDynamicPropertiesStore().isPqSchemeAllowed(scheme)) {
-      return null;
+      throw new IllegalStateException(
+          "PQ-only miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
+              + " has scheme " + miner.getPqScheme()
+              + " but it is not allowed by dynamic properties");
     }
-    byte[] witnessAddress = miner.getWitnessAddress().toByteArray();
-    AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(witnessAddress);
-    if (accountCapsule == null || !accountCapsule.getInstance().hasWitnessPermission()) {
-      return null;
-    }
-    Permission witnessPermission = accountCapsule.getInstance().getWitnessPermission();
-    if (witnessPermission.getKeysCount() == 0) {
-      return null;
-    }
-    return scheme;
-  }
 
-  private void signWitnessAuth(BlockCapsule blockCapsule, Miner miner, PQScheme scheme) {
+
     byte[] pqPrivateKey = miner.getPQPrivateKey();
     byte[] pqPublicKey = miner.getPQPublicKey();
     if (pqPrivateKey == null || pqPublicKey == null) {

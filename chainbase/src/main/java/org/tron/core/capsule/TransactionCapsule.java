@@ -657,20 +657,20 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       DynamicPropertiesStore dynamicPropertiesStore)
       throws ValidateSignatureException {
     if (!isVerified) {
-      int legacyCount = this.transaction.getSignatureCount();
+      int signatureCount = this.transaction.getSignatureCount();
       int pqCount = this.transaction.getPqAuthSigCount();
 
-      if (pqCount > 0 && !dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
+      if (dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
+        signatureCount += pqCount;
+      } else if (pqCount > 0) {
         throw new ValidateSignatureException(
             "pq_auth_sig not allowed: no post-quantum scheme is activated");
       }
-      if (legacyCount == 0 && pqCount == 0) {
-        throw new ValidateSignatureException("miss sig");
+
+      if (signatureCount == 0 || this.transaction.getRawData().getContractCount() <= 0) {
+        throw new ValidateSignatureException("miss sig or contract");
       }
-      if (this.transaction.getRawData().getContractCount() <= 0) {
-        throw new ValidateSignatureException("miss contract");
-      }
-      if (legacyCount + pqCount > dynamicPropertiesStore.getTotalSignNum()) {
+      if (signatureCount > dynamicPropertiesStore.getTotalSignNum()) {
         throw new ValidateSignatureException("too many signatures");
       }
 
@@ -800,7 +800,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
           validatePubSignature(accountStore, dynamicPropertiesStore);
         } else { //transfer from shielded address
           if (this.transaction.getSignatureCount() > 0
-              || this.transaction.getPqAuthSigCount() > 0) {
+              || (this.transaction.getPqAuthSigCount() > 0)) {
             throw new ValidateSignatureException("there should be no signatures signed by "
                     + "transparent address when transfer from shielded address");
           }

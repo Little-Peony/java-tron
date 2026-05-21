@@ -80,18 +80,15 @@ public class Param {
 
     private byte[] pqPublicKey;
 
-    @Getter
-    @Setter
-    private PQScheme pqScheme;
-
     /**
-     * Explicit signing-family marker so the block producer doesn't have to infer
-     * key type from {@code privateKey == null}. Defaults to {@link MinerType#ECDSA};
-     * PQ-only miners must call {@link #setType(MinerType)} with {@link MinerType#PQ}.
+     * Post-quantum signature scheme for this miner. When unset (null), the
+     * miner signs blocks with the legacy ECDSA path using {@link #privateKey};
+     * when set (e.g. {@code FN_DSA_512}), the PQ path is used with
+     * {@link #pqPrivateKey} / {@link #pqPublicKey}.
      */
     @Getter
     @Setter
-    private MinerType type = MinerType.ECDSA;
+    private PQScheme pqScheme;
 
     public Miner(byte[] privateKey, ByteString privateKeyAddress, ByteString witnessAddress) {
       this.privateKey = privateKey;
