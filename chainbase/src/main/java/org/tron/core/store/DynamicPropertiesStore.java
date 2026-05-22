@@ -262,6 +262,8 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
 
   private static final byte[] ALLOW_FN_DSA_512 = "ALLOW_FN_DSA_512".getBytes();
 
+  private static final byte[] ALLOW_ML_DSA_44 = "ALLOW_ML_DSA_44".getBytes();
+
   @Autowired
   private DynamicPropertiesStore(@Value("properties") String dbName) {
     super(dbName);
@@ -3102,6 +3104,21 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
     return getAllowFnDsa512() == 1L;
   }
 
+  public long getAllowMlDsa44() {
+    return Optional.ofNullable(getUnchecked(ALLOW_ML_DSA_44))
+        .map(BytesCapsule::getData)
+        .map(ByteArray::toLong)
+        .orElse(CommonParameter.getInstance().getAllowMlDsa44());
+  }
+
+  public void saveAllowMlDsa44(long value) {
+    this.put(ALLOW_ML_DSA_44, new BytesCapsule(ByteArray.fromLong(value)));
+  }
+
+  public boolean allowMlDsa44() {
+    return getAllowMlDsa44() == 1L;
+  }
+
   /**
    * Returns true iff at least one post-quantum signature scheme is currently
    * activated. Driven by {@link PQSchemeRegistry#registeredSchemes()} so that
@@ -3119,8 +3136,8 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
   }
 
   /**
-   * Per-scheme governance check. V2 launches with FN-DSA-512 only. Future schemes will
-   * each get their own flag.
+   * Per-scheme governance check. Each registered scheme has its own flag so
+   * activation is independent.
    */
   public boolean isPqSchemeAllowed(PQScheme scheme) {
     if (scheme == null) {
@@ -3129,6 +3146,8 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
     switch (scheme) {
       case FN_DSA_512:
         return allowFnDsa512();
+      case ML_DSA_44:
+        return allowMlDsa44();
       default:
         return false;
     }

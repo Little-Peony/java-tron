@@ -786,6 +786,10 @@ public class Args extends CommonParameter {
         config.hasPath(ConfigKey.COMMITTEE_ALLOW_FN_DSA_512) ? config
             .getInt(ConfigKey.COMMITTEE_ALLOW_FN_DSA_512) : 0;
 
+    PARAMETER.allowMlDsa44 =
+        config.hasPath(ConfigKey.COMMITTEE_ALLOW_ML_DSA_44) ? config
+            .getInt(ConfigKey.COMMITTEE_ALLOW_ML_DSA_44) : 0;
+
     logConfig();
   }
 
@@ -927,7 +931,7 @@ public class Args extends CommonParameter {
   }
 
   private static final EnumSet<PQScheme> WITNESS_PQ_SCHEMES = EnumSet.of(
-      PQScheme.FN_DSA_512);
+      PQScheme.FN_DSA_512, PQScheme.ML_DSA_44);
 
   private static void initLocalWitnesses(Config config, CLIParameter cmd) {
     // not a witness node, skip

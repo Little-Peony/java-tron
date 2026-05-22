@@ -36,18 +36,29 @@ public class PQSchemeRegistryTest {
   @Test
   public void containsAcceptsRegisteredScheme() {
     assertTrue(PQSchemeRegistry.contains(PQScheme.FN_DSA_512));
+    assertTrue(PQSchemeRegistry.contains(PQScheme.ML_DSA_44));
+  }
+
+  @Test
+  public void registeredSchemesContainsBothLaunchSchemes() {
+    assertTrue(PQSchemeRegistry.registeredSchemes().contains(PQScheme.FN_DSA_512));
+    assertTrue(PQSchemeRegistry.registeredSchemes().contains(PQScheme.ML_DSA_44));
   }
 
   @Test
   public void getSeedLengthReturnsRegisteredValue() {
     assertEquals(FNDSA512.SEED_LENGTH,
         PQSchemeRegistry.getSeedLength(PQScheme.FN_DSA_512));
+    assertEquals(MLDSA44.SEED_LENGTH,
+        PQSchemeRegistry.getSeedLength(PQScheme.ML_DSA_44));
   }
 
   @Test
   public void getPrivateKeyLengthReturnsRegisteredValue() {
     assertEquals(FNDSA512.PRIVATE_KEY_LENGTH,
         PQSchemeRegistry.getPrivateKeyLength(PQScheme.FN_DSA_512));
+    assertEquals(MLDSA44.PRIVATE_KEY_LENGTH,
+        PQSchemeRegistry.getPrivateKeyLength(PQScheme.ML_DSA_44));
   }
 
   @Test
@@ -59,6 +70,18 @@ public class PQSchemeRegistryTest {
     assertEquals(PQScheme.FN_DSA_512, sig.getScheme());
     // Same seed must yield deterministic keypair across direct and dispatched paths.
     FNDSA512 direct = new FNDSA512(seed);
+    assertArrayEquals(direct.getPublicKey(), sig.getPublicKey());
+    assertArrayEquals(direct.getPrivateKey(), sig.getPrivateKey());
+  }
+
+  @Test
+  public void fromSeedDispatchesToMlDsa() {
+    byte[] seed = new byte[MLDSA44.SEED_LENGTH];
+    Arrays.fill(seed, (byte) 0x07);
+    PQSignature sig = PQSchemeRegistry.fromSeed(PQScheme.ML_DSA_44, seed);
+    assertNotNull(sig);
+    assertEquals(PQScheme.ML_DSA_44, sig.getScheme());
+    MLDSA44 direct = new MLDSA44(seed);
     assertArrayEquals(direct.getPublicKey(), sig.getPublicKey());
     assertArrayEquals(direct.getPrivateKey(), sig.getPrivateKey());
   }

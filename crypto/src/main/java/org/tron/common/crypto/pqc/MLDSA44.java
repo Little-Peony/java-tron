@@ -1,0 +1,239 @@
+package org.tron.common.crypto.pqc;
+
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
+import org.bouncycastle.crypto.params.ParametersWithRandom;
+import org.bouncycastle.crypto.prng.FixedSecureRandom;
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAKeyGenerationParameters;
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAKeyPairGenerator;
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAParameters;
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAPrivateKeyParameters;
+import org.bouncycastle.pqc.crypto.mldsa.MLDSAPublicKeyParameters;
+import org.bouncycastle.pqc.crypto.mldsa.MLDSASigner;
+import org.tron.protos.Protocol.PQScheme;
+
+/**
+ * FIPS 204 ML-DSA-44 (CRYSTALS-Dilithium-2) keypair-bound signer/verifier.
+ * Instance methods sign/verify with the bound keypair, static
+ * {@link #sign(byte[], byte[])} / {@link #verify} provide stateless entry
+ * points used by {@link PQSchemeRegistry}.
+ *
+ * <p>ML-DSA-44 signatures are <strong>fixed-length</strong> at
+ * {@link #SIGNATURE_LENGTH} (2420 B). Public keys are the standard encoding
+ * {@code rho ‖ t1} ({@link #PUBLIC_KEY_LENGTH} = 1312 B); private keys are
+ * BC's expanded encoding {@code rho ‖ K ‖ tr ‖ s1 ‖ s2 ‖ t0}
+ * ({@link #PRIVATE_KEY_LENGTH} = 2560 B). Unlike Falcon-512 there is no
+ * extended priv-with-pub form: BC's {@code MLDSAPrivateKeyParameters} can
+ * recover the public key directly from the expanded private key (the
+ * derived {@code t1} stays in memory after instantiation).
+ *
+ * <p>Pure ML-DSA only (no SHA2-512 pre-hash variant). The "pure" mode signs
+ * the raw message under SHAKE-256 per FIPS 204 §5.2, matching the verify
+ * side of the EVM precompile at address 0x19 (EIP-8051).
+ */
+public final class MLDSA44 implements PQSignature {
+
+  /**
+   * ML-DSA-44 expanded private key from BC: {@code rho(32) ‖ K(32) ‖ tr(64)
+   * ‖ s1(384) ‖ s2(384) ‖ t0(1664)} = 2560 bytes.
+   */
+  public static final int PRIVATE_KEY_LENGTH = 2560;
+  /**
+   * ML-DSA-44 public key: {@code rho(32) ‖ t1(1280)} = 1312 bytes.
+   */
+  public static final int PUBLIC_KEY_LENGTH = 1312;
+  /** ML-DSA-44 signature length is fixed at 2420 bytes per FIPS 204. */
+  public static final int SIGNATURE_LENGTH = 2420;
+  /** ML-DSA keygen seed length (xi) per FIPS 204 §5.1 is 32 bytes. */
+  public static final int SEED_LENGTH = 32;
+
+  private static final MLDSAParameters PARAMS = MLDSAParameters.ml_dsa_44;
+
+  private final byte[] privateKey;
+  private final byte[] publicKey;
+
+  public MLDSA44() {
+    AsymmetricCipherKeyPair kp = generateKeyPair(new SecureRandom());
+    this.privateKey = ((MLDSAPrivateKeyParameters) kp.getPrivate()).getEncoded();
+    this.publicKey = ((MLDSAPublicKeyParameters) kp.getPublic()).getEncoded();
+  }
+
+  public MLDSA44(byte[] seed) {
+    if (seed == null || seed.length != SEED_LENGTH) {
+      throw new IllegalArgumentException("ML-DSA seed length must be " + SEED_LENGTH);
+    }
+    AsymmetricCipherKeyPair kp = generateKeyPair(new FixedSecureRandom(seed));
+    this.privateKey = ((MLDSAPrivateKeyParameters) kp.getPrivate()).getEncoded();
+    this.publicKey = ((MLDSAPublicKeyParameters) kp.getPublic()).getEncoded();
+  }
+
+  public MLDSA44(byte[] privateKey, byte[] publicKey) {
+    if (privateKey == null || privateKey.length != PRIVATE_KEY_LENGTH) {
+      throw new IllegalArgumentException(
+          "ML-DSA private key length must be " + PRIVATE_KEY_LENGTH);
+    }
+    if (publicKey == null || publicKey.length != PUBLIC_KEY_LENGTH) {
+      throw new IllegalArgumentException(
+          "ML-DSA public key length must be " + PUBLIC_KEY_LENGTH);
+    }
+    requireConsistent(privateKey, publicKey);
+    this.privateKey = privateKey.clone();
+    this.publicKey = publicKey.clone();
+  }
+
+  @Override
+  public PQScheme getScheme() {
+    return PQScheme.ML_DSA_44;
+  }
+
+  @Override
+  public int getPrivateKeyLength() {
+    return PRIVATE_KEY_LENGTH;
+  }
+
+  @Override
+  public int getPublicKeyLength() {
+    return PUBLIC_KEY_LENGTH;
+  }
+
+  /** Returns the protocol-level signature length (signatures are fixed-length). */
+  @Override
+  public int getSignatureLength() {
+    return SIGNATURE_LENGTH;
+  }
+
+  @Override
+  public byte[] getPrivateKey() {
+    return privateKey.clone();
+  }
+
+  @Override
+  public byte[] getPublicKey() {
+    return publicKey.clone();
+  }
+
+  @Override
+  public byte[] getAddress() {
+    return PQSchemeRegistry.computeAddress(PQScheme.ML_DSA_44, publicKey);
+  }
+
+  @Override
+  public byte[] sign(byte[] message) {
+    return sign(privateKey, message);
+  }
+
+  @Override
+  public boolean verify(byte[] message, byte[] signature) {
+    return verify(publicKey, message, signature);
+  }
+
+  /**
+   * Strict fixed-length verify: ML-DSA-44 signatures are exactly
+   * {@link #SIGNATURE_LENGTH} bytes; any other length is rejected before BC
+   * is invoked.
+   */
+  @Override
+  public void validateSignature(byte[] signature) {
+    if (signature == null || signature.length != SIGNATURE_LENGTH) {
+      throw new IllegalArgumentException(
+          "invalid " + getScheme() + " signature length: "
+              + (signature == null ? "null" : signature.length)
+              + ", expected " + SIGNATURE_LENGTH);
+    }
+  }
+
+  public static boolean verify(byte[] publicKey, byte[] message, byte[] signature) {
+    if (publicKey == null || publicKey.length != PUBLIC_KEY_LENGTH) {
+      throw new IllegalArgumentException(
+          "ML-DSA public key length must be " + PUBLIC_KEY_LENGTH);
+    }
+    if (signature == null || signature.length != SIGNATURE_LENGTH) {
+      throw new IllegalArgumentException(
+          "ML-DSA signature length must be " + SIGNATURE_LENGTH);
+    }
+    if (message == null) {
+      throw new IllegalArgumentException("message must not be null");
+    }
+    MLDSAPublicKeyParameters pk = new MLDSAPublicKeyParameters(PARAMS, publicKey);
+    MLDSASigner verifier = new MLDSASigner();
+    verifier.init(false, pk);
+    verifier.update(message, 0, message.length);
+    try {
+      return verifier.verifySignature(signature);
+    } catch (RuntimeException e) {
+      return false;
+    }
+  }
+
+  public static byte[] sign(byte[] privateKey, byte[] message) {
+    if (privateKey == null || privateKey.length != PRIVATE_KEY_LENGTH) {
+      throw new IllegalArgumentException(
+          "ML-DSA private key length must be " + PRIVATE_KEY_LENGTH);
+    }
+    if (message == null) {
+      throw new IllegalArgumentException("message must not be null");
+    }
+    MLDSAPrivateKeyParameters sk = new MLDSAPrivateKeyParameters(PARAMS, privateKey);
+    MLDSASigner signer = new MLDSASigner();
+    signer.init(true, new ParametersWithRandom(sk, new SecureRandom()));
+    signer.update(message, 0, message.length);
+    try {
+      return signer.generateSignature();
+    } catch (Exception e) {
+      throw new IllegalStateException("ML-DSA signing failed", e);
+    }
+  }
+
+  /**
+   * Recovers the public key from the expanded private key. ML-DSA's BC
+   * encoding includes {@code rho} and the witness {@code t0}, from which
+   * {@code t1} is re-derived during {@link MLDSAPrivateKeyParameters}
+   * construction — so {@code pk = rho ‖ t1} is recoverable without
+   * persisting it alongside.
+   */
+  public static byte[] derivePublicKey(byte[] privateKey) {
+    if (privateKey == null || privateKey.length != PRIVATE_KEY_LENGTH) {
+      throw new IllegalArgumentException(
+          "ML-DSA private key length must be " + PRIVATE_KEY_LENGTH);
+    }
+    MLDSAPrivateKeyParameters sk = new MLDSAPrivateKeyParameters(PARAMS, privateKey);
+    return sk.getPublicKey();
+  }
+
+  public static byte[] computeAddress(byte[] publicKey) {
+    return PQSchemeRegistry.computeAddress(PQScheme.ML_DSA_44, publicKey);
+  }
+
+  private static AsymmetricCipherKeyPair generateKeyPair(SecureRandom random) {
+    MLDSAKeyPairGenerator generator = new MLDSAKeyPairGenerator();
+    generator.init(new MLDSAKeyGenerationParameters(random, PARAMS));
+    return generator.generateKeyPair();
+  }
+
+  /**
+   * Domain-separated probe used by {@link #requireConsistent}; not a security
+   * boundary (ML-DSA hashes the message internally), the constant just makes the
+   * keypair self-check searchable in logs/stack traces.
+   */
+  private static final byte[] CONSISTENCY_PROBE =
+      "tron:ML-DSA-44:keypair-consistency-probe".getBytes(StandardCharsets.UTF_8);
+
+  /**
+   * Probe that the supplied (sk, pk) actually form a keypair. Sign and verify
+   * a fixed probe message; runs once per witness load and costs a few ms on
+   * ML-DSA-44 — acceptable for a startup-time misconfiguration check, and
+   * avoids advertising an address that signatures will never satisfy.
+   */
+  private static void requireConsistent(byte[] privateKey, byte[] publicKey) {
+    byte[] sig;
+    try {
+      sig = sign(privateKey, CONSISTENCY_PROBE);
+    } catch (RuntimeException e) {
+      throw new IllegalArgumentException("ML-DSA private/public key mismatch", e);
+    }
+    if (!verify(publicKey, CONSISTENCY_PROBE, sig)) {
+      throw new IllegalArgumentException("ML-DSA private/public key mismatch");
+    }
+  }
+}

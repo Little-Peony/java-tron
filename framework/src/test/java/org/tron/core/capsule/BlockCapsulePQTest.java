@@ -9,6 +9,7 @@ import org.tron.common.BaseTest;
 import org.tron.common.TestConstants;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.crypto.pqc.FNDSA512;
+import org.tron.common.crypto.pqc.MLDSA44;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.config.args.Args;
@@ -238,5 +239,57 @@ public class BlockCapsulePQTest extends BaseTest {
     block.setPqAuthSig(buildPQAuthSig(signPQ(digest)));
     block.validateSignature(
         dbManager.getDynamicPropertiesStore(), dbManager.getAccountStore());
+  }
+
+  /**
+   * Smoke test that the registry-driven block-signing path also accepts ML-DSA-44.
+   * The validate path is scheme-agnostic; a happy-path + tampered-sig pair is
+   * enough to prove parametric correctness across both registered schemes.
+   */
+  @Test
+  public void pqOnlyAcceptedForMlDsa44() throws Exception {
+    MLDSA44 mlKeypair = new MLDSA44();
+    byte[] mlAddress = PQSchemeRegistry.computeAddress(
+        PQScheme.ML_DSA_44, mlKeypair.getPublicKey());
+    dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1L);
+    dbManager.getDynamicPropertiesStore().saveAllowMlDsa44(1L);
+    AccountCapsule witness = buildWitnessAccount(mlAddress);
+    dbManager.getAccountStore().put(witnessAddress, witness);
+
+    byte[] parentHash = new byte[32];
+    BlockCapsule block = buildUnsignedBlock(parentHash);
+    byte[] digest = block.getRawHashBytes();
+    byte[] sig = MLDSA44.sign(mlKeypair.getPrivateKey(), digest);
+    block.setPqAuthSig(PQAuthSig.newBuilder()
+        .setScheme(PQScheme.ML_DSA_44)
+        .setPublicKey(ByteString.copyFrom(mlKeypair.getPublicKey()))
+        .setSignature(ByteString.copyFrom(sig))
+        .build());
+    Assert.assertTrue(block.validateSignature(
+        dbManager.getDynamicPropertiesStore(), dbManager.getAccountStore()));
+  }
+
+  @Test
+  public void tamperedPQAuthSigFailsForMlDsa44() throws Exception {
+    MLDSA44 mlKeypair = new MLDSA44();
+    byte[] mlAddress = PQSchemeRegistry.computeAddress(
+        PQScheme.ML_DSA_44, mlKeypair.getPublicKey());
+    dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1L);
+    dbManager.getDynamicPropertiesStore().saveAllowMlDsa44(1L);
+    AccountCapsule witness = buildWitnessAccount(mlAddress);
+    dbManager.getAccountStore().put(witnessAddress, witness);
+
+    byte[] parentHash = new byte[32];
+    BlockCapsule block = buildUnsignedBlock(parentHash);
+    byte[] digest = block.getRawHashBytes();
+    byte[] sig = MLDSA44.sign(mlKeypair.getPrivateKey(), digest);
+    sig[sig.length - 1] ^= 0x01;
+    block.setPqAuthSig(PQAuthSig.newBuilder()
+        .setScheme(PQScheme.ML_DSA_44)
+        .setPublicKey(ByteString.copyFrom(mlKeypair.getPublicKey()))
+        .setSignature(ByteString.copyFrom(sig))
+        .build());
+    Assert.assertFalse(block.validateSignature(
+        dbManager.getDynamicPropertiesStore(), dbManager.getAccountStore()));
   }
 }

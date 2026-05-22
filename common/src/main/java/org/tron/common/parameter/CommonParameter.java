@@ -675,6 +675,10 @@ public class CommonParameter {
   @Setter
   public long allowFnDsa512;
 
+  @Getter
+  @Setter
+  public long allowMlDsa44;
+
 
   private static double calcMaxTimeRatio() {
     return 5.0;

@@ -18,7 +18,8 @@ import org.tron.protos.Protocol.PQScheme;
  * {@code 0x41 ‖ deriveHash(scheme, public_key)[12..32]}, matching the ECDSA
  * flow's {@code 0x41 ‖ Keccak-256(public_key)[12..32]} so PQ and ECDSA
  * addresses share the same derivation shape. The hash function is scheme-
- * specific (see {@link #deriveHash}); {@code FN_DSA_512} uses Keccak-256.
+ * specific (see {@link #deriveHash}); {@code FN_DSA_512} and {@code ML_DSA_44}
+ * both use Keccak-256.
  *
  * <p><b>Wire format.</b> The proto3 default {@code UNKNOWN_PQ_SCHEME = 0} is
  * reserved for the {@code UNKNOWN_} API-evolution slot and is NOT interpreted
@@ -99,6 +100,31 @@ public final class PQSchemeRegistry {
           @Override
           public PQSignature fromKeypair(byte[] privateKey, byte[] publicKey) {
             return new FNDSA512(privateKey, publicKey);
+          }
+        }));
+    m.put(PQScheme.ML_DSA_44, new SchemeInfo(
+        MLDSA44.PRIVATE_KEY_LENGTH, MLDSA44.PUBLIC_KEY_LENGTH,
+        MLDSA44.SIGNATURE_LENGTH, MLDSA44.SEED_LENGTH,
+        KECCAK_256,
+        new SignatureOps() {
+          @Override
+          public byte[] sign(byte[] privateKey, byte[] message) {
+            return MLDSA44.sign(privateKey, message);
+          }
+
+          @Override
+          public boolean verify(byte[] publicKey, byte[] message, byte[] signature) {
+            return MLDSA44.verify(publicKey, message, signature);
+          }
+
+          @Override
+          public PQSignature fromSeed(byte[] seed) {
+            return new MLDSA44(seed);
+          }
+
+          @Override
+          public PQSignature fromKeypair(byte[] privateKey, byte[] publicKey) {
+            return new MLDSA44(privateKey, publicKey);
           }
         }));
     SCHEMES = Collections.unmodifiableMap(m);

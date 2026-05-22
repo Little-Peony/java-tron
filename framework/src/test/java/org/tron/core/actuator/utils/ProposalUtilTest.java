@@ -860,4 +860,61 @@ public class ProposalUtilTest extends BaseTest {
     }
     dynamicPropertiesStore.saveAllowFnDsa512(0L);
   }
+
+  @Test
+  public void validateAllowMlDsa44() {
+    long code = ProposalType.ALLOW_ML_DSA_44.getCode();
+    ThrowingRunnable proposeZero = () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+        code, 0);
+    ThrowingRunnable proposeOne = () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+        code, 1);
+    ThrowingRunnable proposeTwo = () -> ProposalUtil.validator(dynamicPropertiesStore, forkUtils,
+        code, 2);
+
+    forkUtils.init(dbManager.getChainBaseManager());
+    byte[] stats = new byte[27];
+    forkUtils.getManager().getDynamicPropertiesStore()
+        .statsByVersion(ForkBlockVersionEnum.VERSION_4_8_1.getValue(), stats);
+    long maintenanceTimeInterval = forkUtils.getManager().getDynamicPropertiesStore()
+        .getMaintenanceTimeInterval();
+    long hardForkTime =
+        ((ForkBlockVersionEnum.VERSION_4_8_2.getHardForkTime() - 1) / maintenanceTimeInterval + 1)
+            * maintenanceTimeInterval;
+    forkUtils.getManager().getDynamicPropertiesStore()
+        .saveLatestBlockHeaderTimestamp(hardForkTime - 1);
+
+    ContractValidateException thrown = assertThrows(ContractValidateException.class, proposeOne);
+    assertEquals("Bad chain parameter id [ALLOW_ML_DSA_44]", thrown.getMessage());
+
+    forkUtils.getManager().getDynamicPropertiesStore()
+        .saveLatestBlockHeaderTimestamp(hardForkTime + 1);
+    Arrays.fill(stats, (byte) 1);
+    forkUtils.getManager().getDynamicPropertiesStore()
+        .statsByVersion(ForkBlockVersionEnum.VERSION_4_8_2.getValue(), stats);
+
+    thrown = assertThrows(ContractValidateException.class, proposeTwo);
+    assertEquals("This value[ALLOW_ML_DSA_44] is only allowed to be 0 or 1", thrown.getMessage());
+
+    thrown = assertThrows(ContractValidateException.class, proposeZero);
+    assertEquals("[ALLOW_ML_DSA_44] has been set to 0, no need to propose again",
+        thrown.getMessage());
+
+    try {
+      proposeOne.run();
+    } catch (Throwable e) {
+      Assert.fail("Should pass when toggling 0 -> 1: " + e.getMessage());
+    }
+
+    dynamicPropertiesStore.saveAllowMlDsa44(1L);
+    thrown = assertThrows(ContractValidateException.class, proposeOne);
+    assertEquals("[ALLOW_ML_DSA_44] has been set to 1, no need to propose again",
+        thrown.getMessage());
+
+    try {
+      proposeZero.run();
+    } catch (Throwable e) {
+      Assert.fail("Should pass when toggling 1 -> 0: " + e.getMessage());
+    }
+    dynamicPropertiesStore.saveAllowMlDsa44(0L);
+  }
 }
