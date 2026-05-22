@@ -183,8 +183,8 @@ public class BlockCapsulePQTest extends BaseTest {
         dbManager.getDynamicPropertiesStore(), dbManager.getAccountStore()));
   }
 
-  @Test
-  public void pqAuthSigWithDefaultSchemeAcceptedAsFnDsa512() throws Exception {
+  @Test(expected = ValidateSignatureException.class)
+  public void pqAuthSigWithDefaultSchemeRejected() throws Exception {
     dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1L);
     dbManager.getDynamicPropertiesStore().saveAllowFnDsa512(1L);
     AccountCapsule witness = buildWitnessAccount(pqAddress);
@@ -194,15 +194,16 @@ public class BlockCapsulePQTest extends BaseTest {
     BlockCapsule block = buildUnsignedBlock(parentHash);
     byte[] digest = block.getRawHashBytes();
     // Omit setScheme(...) so the field stays at the proto3 default
-    // UNKNOWN_PQ_SCHEME; PQSchemeRegistry#resolve normalizes it to FN_DSA_512.
+    // UNKNOWN_PQ_SCHEME. Producers must set the scheme tag explicitly; the
+    // verifier rejects scheme=0 as unregistered.
     PQAuthSig defaultScheme = PQAuthSig.newBuilder()
         .setPublicKey(ByteString.copyFrom(pqKeypair.getPublicKey()))
         .setSignature(ByteString.copyFrom(signPQ(digest)))
         .build();
     Assert.assertEquals(PQScheme.UNKNOWN_PQ_SCHEME, defaultScheme.getScheme());
     block.setPqAuthSig(defaultScheme);
-    Assert.assertTrue(block.validateSignature(
-        dbManager.getDynamicPropertiesStore(), dbManager.getAccountStore()));
+    block.validateSignature(
+        dbManager.getDynamicPropertiesStore(), dbManager.getAccountStore());
   }
 
   @Test

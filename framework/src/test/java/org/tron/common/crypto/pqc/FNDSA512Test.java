@@ -431,25 +431,16 @@ public class FNDSA512Test {
   }
 
   @Test
-  public void unknownPqSchemeResolvesToFnDsa512() {
-    assertEquals(PQScheme.FN_DSA_512,
-        PQSchemeRegistry.resolve(PQScheme.UNKNOWN_PQ_SCHEME));
-    assertTrue(PQSchemeRegistry.contains(PQScheme.UNKNOWN_PQ_SCHEME));
-    assertEquals(FNDSA512.PUBLIC_KEY_LENGTH,
-        PQSchemeRegistry.getPublicKeyLength(PQScheme.UNKNOWN_PQ_SCHEME));
-    assertEquals(FNDSA512.SIGNATURE_LENGTH,
-        PQSchemeRegistry.getSignatureLength(PQScheme.UNKNOWN_PQ_SCHEME));
-    assertTrue(PQSchemeRegistry.isValidSignatureLength(
-        PQScheme.UNKNOWN_PQ_SCHEME, FNDSA512.SIGNATURE_LENGTH));
-    assertArrayEquals(
-        FNDSA512.computeAddress(pk.getH()),
-        PQSchemeRegistry.computeAddress(PQScheme.UNKNOWN_PQ_SCHEME, pk.getH()));
-
-    byte[] msg = "unknown-resolves-to-falcon".getBytes();
-    byte[] sig = PQSchemeRegistry.sign(
-        PQScheme.UNKNOWN_PQ_SCHEME, sk.getEncoded(), msg);
-    assertTrue(PQSchemeRegistry.verify(
-        PQScheme.UNKNOWN_PQ_SCHEME, pk.getH(), msg, sig));
-    assertTrue(FNDSA512.verify(pk.getH(), msg, sig));
+  public void unknownPqSchemeIsRejectedAtRegistry() {
+    // The proto3 default UNKNOWN_PQ_SCHEME is reserved and must not be
+    // interpreted as any registered scheme; producers must set the tag
+    // explicitly.
+    assertFalse(PQSchemeRegistry.contains(PQScheme.UNKNOWN_PQ_SCHEME));
+    try {
+      PQSchemeRegistry.getPublicKeyLength(PQScheme.UNKNOWN_PQ_SCHEME);
+      fail("UNKNOWN_PQ_SCHEME must be rejected");
+    } catch (IllegalArgumentException expected) {
+      assertTrue(expected.getMessage().contains("PQSignature registered"));
+    }
   }
 }

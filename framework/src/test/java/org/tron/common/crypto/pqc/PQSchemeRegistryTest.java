@@ -29,6 +29,11 @@ public class PQSchemeRegistryTest {
   }
 
   @Test
+  public void containsRejectsUnknownPqScheme() {
+    assertFalse(PQSchemeRegistry.contains(PQScheme.UNKNOWN_PQ_SCHEME));
+  }
+
+  @Test
   public void containsAcceptsRegisteredScheme() {
     assertTrue(PQSchemeRegistry.contains(PQScheme.FN_DSA_512));
   }
@@ -37,9 +42,6 @@ public class PQSchemeRegistryTest {
   public void getSeedLengthReturnsRegisteredValue() {
     assertEquals(FNDSA512.SEED_LENGTH,
         PQSchemeRegistry.getSeedLength(PQScheme.FN_DSA_512));
-    // UNKNOWN_PQ_SCHEME normalizes to FN_DSA_512.
-    assertEquals(FNDSA512.SEED_LENGTH,
-        PQSchemeRegistry.getSeedLength(PQScheme.UNKNOWN_PQ_SCHEME));
   }
 
   @Test
@@ -116,10 +118,21 @@ public class PQSchemeRegistryTest {
   }
 
   @Test
-  public void resolvePassesThroughNonDefaultSchemes() {
+  public void requireRejectsUnknownPqScheme() {
+    try {
+      PQSchemeRegistry.getPublicKeyLength(PQScheme.UNKNOWN_PQ_SCHEME);
+      fail("UNKNOWN_PQ_SCHEME must be rejected");
+    } catch (IllegalArgumentException expected) {
+      assertTrue(expected.getMessage().contains("PQSignature registered"));
+    }
+  }
+
+  @Test
+  public void resolveIsPassThrough() {
     assertEquals(PQScheme.FN_DSA_512,
         PQSchemeRegistry.resolve(PQScheme.FN_DSA_512));
-    // null should pass through so contains/require can decide.
+    assertEquals(PQScheme.UNKNOWN_PQ_SCHEME,
+        PQSchemeRegistry.resolve(PQScheme.UNKNOWN_PQ_SCHEME));
     assertTrue(PQSchemeRegistry.resolve(null) == null);
   }
 
