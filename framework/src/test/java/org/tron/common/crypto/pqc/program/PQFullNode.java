@@ -8,7 +8,8 @@ import java.util.Collections;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.crypto.pqc.FNDSA512;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
+import org.tron.common.crypto.pqc.PQSignature;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.config.DefaultConfig;
@@ -17,9 +18,11 @@ import org.tron.core.db.Manager;
 
 /**
  * Demo fullnode that dials {@link PQWitnessNode} via P2P and syncs PQ-signed blocks.
+ * The active scheme follows {@link PQWitnessNode#PQ_SCHEME} (selectable via
+ * {@code -Dpqc.scheme}), so both processes derive matching genesis state.
  *
- * Both nodes share the same deterministic PQ genesis pre-state (witness account with an
- * FN-DSA-512 witness permission + demo user account with an FN-DSA-512 owner permission),
+ * Both nodes share the same deterministic PQ genesis pre-state (witness account with a
+ * PQ witness permission + demo user account with a PQ owner permission),
  * installed via {@link PQWitnessNode#installPQGenesisState}. Once the witness produces
  * a block it is broadcast over P2P; this node validates {@code BlockHeader.pq_auth_sig}
  * against the same on-chain public key and applies the block.
@@ -56,19 +59,22 @@ public class PQFullNode {
         .setLevel(ch.qos.logback.classic.Level.INFO);
 
     // ── 1. Derive the same deterministic keys used by PQWitnessNode ──────
-    FNDSA512 witnessKp = new FNDSA512(PQWitnessNode.WITNESS_SEED);
-    FNDSA512 userKp    = new FNDSA512(PQWitnessNode.USER_SEED);
+    PQSignature witnessKp = PQSchemeRegistry.fromSeed(
+        PQWitnessNode.PQ_SCHEME, PQWitnessNode.WITNESS_SEED);
+    PQSignature userKp    = PQSchemeRegistry.fromSeed(
+        PQWitnessNode.PQ_SCHEME, PQWitnessNode.USER_SEED);
 
     byte[] witnessPub = witnessKp.getPublicKey();
     byte[] userPub    = userKp.getPublicKey();
 
     System.out.println("=== PQC Full Node ===");
+    System.out.println("Scheme:         " + PQWitnessNode.PQ_SCHEME);
     System.out.println("Peer (witness): " + WITNESS_HOST + ":" + WITNESS_P2P_PORT);
     System.out.println("gRPC port:      " + GRPC_PORT);
     System.out.println("HTTP port:      " + HTTP_PORT);
     System.out.println("P2P port:       " + P2P_PORT);
     System.out.println("Witness address (expected): "
-        + ByteArray.toHexString(FNDSA512.computeAddress(witnessPub)));
+        + ByteArray.toHexString(witnessKp.getAddress()));
 
     // ── 2. Configure node (no -w: this is a pure fullnode) ────────────────
     File dbDir = Files.createTempDirectory("pqc-fullnode-").toFile();

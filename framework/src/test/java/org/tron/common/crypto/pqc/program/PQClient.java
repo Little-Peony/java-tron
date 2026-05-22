@@ -11,7 +11,8 @@ import org.tron.api.GrpcAPI.EmptyMessage;
 import org.tron.api.GrpcAPI.Return;
 import org.tron.api.WalletGrpc;
 import org.tron.api.WalletGrpc.WalletBlockingStub;
-import org.tron.common.crypto.pqc.FNDSA512;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
+import org.tron.common.crypto.pqc.PQSignature;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
@@ -23,8 +24,9 @@ import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.contract.BalanceContract.TransferContract;
 
 /**
- * Demo client that connects to {@link PQWitnessNode} and broadcasts an FN-DSA-512
- * signed transfer transaction.
+ * Demo client that connects to {@link PQWitnessNode} and broadcasts a
+ * PQ-signed transfer transaction. Scheme is selected via {@code -Dpqc.scheme}
+ * (FN_DSA_512 or ML_DSA_44, default FN_DSA_512) and must match the witness node.
  *
  * The keypair is derived from the same fixed seed used by PQWitnessNode, so no
  * out-of-band key exchange is needed.
@@ -36,11 +38,14 @@ import org.tron.protos.contract.BalanceContract.TransferContract;
  *     ./gradlew :framework:run -PmainClass=org.tron.common.crypto.pqc.program.PQClient
  *
  * Optional JVM args:
- *   -Dpqc.host=localhost  (default: localhost)
- *   -Dpqc.port=50051      (default: 50051)
+ *   -Dpqc.scheme=FN_DSA_512  (default; or ML_DSA_44)
+ *   -Dpqc.host=localhost     (default: localhost)
+ *   -Dpqc.port=50051         (default: 50051)
  */
 public class PQClient {
 
+  private static final PQScheme PQ_SCHEME = PQScheme.valueOf(
+      System.getProperty("pqc.scheme", PQScheme.FN_DSA_512.name()));
   private static final String HOST =
       System.getProperty("pqc.host", "localhost");
   private static final int PORT =
@@ -58,16 +63,16 @@ public class PQClient {
         .setLevel(ch.qos.logback.classic.Level.INFO);
 
     // ── 1. Derive user keypair from same fixed seed as PQWitnessNode ─────
-    byte[] userSeed = new byte[FNDSA512.SEED_LENGTH];
+    byte[] userSeed = new byte[PQSchemeRegistry.getSeedLength(PQ_SCHEME)];
     Arrays.fill(userSeed, (byte) 0x02);
-    FNDSA512 userKp = new FNDSA512(userSeed);
+    PQSignature userKp = PQSchemeRegistry.fromSeed(PQ_SCHEME, userSeed);
 
     byte[] userPub    = userKp.getPublicKey();
-    byte[] userPriv   = userKp.getPrivateKey();
-    byte[] signerAddr = FNDSA512.computeAddress(userPub);
+    byte[] signerAddr = userKp.getAddress();
     byte[] ownerAddr  = PQWitnessNode.USER_ADDR;
 
     System.out.println("=== PQC Client ===");
+    System.out.println("Scheme:         " + PQ_SCHEME);
     System.out.println("Connecting to " + HOST + ":" + PORT);
     System.out.println("Owner address:  " + ByteArray.toHexString(ownerAddr));
     System.out.println("Signer address: " + ByteArray.toHexString(signerAddr));
@@ -109,17 +114,17 @@ public class PQClient {
 
       Transaction tx = Transaction.newBuilder().setRawData(rawData).build();
 
-      // ── 5. Sign with FN-DSA-512 pq_auth_sig ─────────────────────────────
+      // ── 5. Sign with selected PQ scheme ─────────────────────────────────
       byte[] txId   = Sha256Hash.of(
           CommonParameter.getInstance().isECKeyCryptoEngine(),
           rawData.toByteArray()).getBytes();
-      byte[] sig    = FNDSA512.sign(userPriv, txId);
+      byte[] sig    = userKp.sign(txId);
 
       // Producers must set the scheme tag explicitly; scheme=0
       // (UNKNOWN_PQ_SCHEME) is rejected by the verifier as unregistered.
       Transaction signedTx = tx.toBuilder()
           .addPqAuthSig(PQAuthSig.newBuilder()
-              .setScheme(PQScheme.FN_DSA_512)
+              .setScheme(PQ_SCHEME)
               .setPublicKey(ByteString.copyFrom(userPub))
               .setSignature(ByteString.copyFrom(sig)))
           .build();

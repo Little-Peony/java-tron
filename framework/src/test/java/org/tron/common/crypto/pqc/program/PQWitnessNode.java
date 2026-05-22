@@ -12,8 +12,8 @@ import org.bouncycastle.util.encoders.Hex;
 import org.tron.common.application.Application;
 import org.tron.common.application.ApplicationFactory;
 import org.tron.common.application.TronApplicationContext;
-import org.tron.common.crypto.pqc.FNDSA512;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
+import org.tron.common.crypto.pqc.PQSignature;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.AccountCapsule;
@@ -30,10 +30,12 @@ import org.tron.protos.Protocol.Permission;
 import org.tron.protos.Protocol.Permission.PermissionType;
 
 /**
- * Demo witness node with FN-DSA-512 block production.
+ * Demo witness node with PQ block production. Scheme is selected via
+ * {@code -Dpqc.scheme} (FN_DSA_512 or ML_DSA_44, default FN_DSA_512) and must
+ * match what {@link PQClient} / {@link PQFullNode} use.
  *
  * Starts an in-process TRON node configured with a PQC witness keypair and
- * a user account that holds an FN-DSA-512 owner permission — ready to receive
+ * a user account that holds a PQ owner permission — ready to receive
  * transactions from {@link PQClient}.
  *
  * Keypairs are derived from fixed seeds so PQClient can derive matching keys
@@ -47,9 +49,13 @@ import org.tron.protos.Protocol.Permission.PermissionType;
  */
 public class PQWitnessNode {
 
-  /** Fixed seed for the FN-DSA-512 witness keypair (shared with PQClient for derivation). */
+  /** Active PQ scheme, selectable via {@code -Dpqc.scheme}. */
+  static final PQScheme PQ_SCHEME = PQScheme.valueOf(
+      System.getProperty("pqc.scheme", PQScheme.FN_DSA_512.name()));
+
+  /** Fixed seed for the PQ witness keypair (shared with PQClient for derivation). */
   static final byte[] WITNESS_SEED = filledSeed(0x01);
-  /** Fixed seed for the FN-DSA-512 user keypair (shared with PQClient for derivation). */
+  /** Fixed seed for the PQ user keypair (shared with PQClient for derivation). */
   static final byte[] USER_SEED = filledSeed(0x02);
 
   /** gRPC port the node listens on. */
@@ -73,16 +79,17 @@ public class PQWitnessNode {
         .setLevel(ch.qos.logback.classic.Level.INFO);
 
     // ── 1. Derive deterministic keypairs ──────────────────────────────────
-    FNDSA512 witnessKp = new FNDSA512(WITNESS_SEED);
-    FNDSA512 userKp    = new FNDSA512(USER_SEED);
+    PQSignature witnessKp = PQSchemeRegistry.fromSeed(PQ_SCHEME, WITNESS_SEED);
+    PQSignature userKp    = PQSchemeRegistry.fromSeed(PQ_SCHEME, USER_SEED);
 
     byte[] witnessPub  = witnessKp.getPublicKey();
-    byte[] witnessAddr = FNDSA512.computeAddress(witnessPub);
+    byte[] witnessAddr = witnessKp.getAddress();
     byte[] userPub     = userKp.getPublicKey();
-    byte[] signerAddr  = FNDSA512.computeAddress(userPub);
+    byte[] signerAddr  = userKp.getAddress();
 
     System.out.println("=== PQC Witness Node ===");
-    System.out.println("Witness address (FN-DSA-512): " + ByteArray.toHexString(witnessAddr));
+    System.out.println("Scheme:                       " + PQ_SCHEME);
+    System.out.println("Witness address:              " + ByteArray.toHexString(witnessAddr));
     System.out.println("User address:                 " + ByteArray.toHexString(USER_ADDR));
     System.out.println("User signer address:          " + ByteArray.toHexString(signerAddr));
     System.out.println("gRPC port:                    " + GRPC_PORT);
@@ -143,13 +150,17 @@ public class PQWitnessNode {
    */
   static void installPQGenesisState(Manager db, ChainBaseManager chain,
       byte[] witnessPub, byte[] userPub) {
-    byte[] witnessAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, witnessPub);
+    byte[] witnessAddr = PQSchemeRegistry.computeAddress(PQ_SCHEME, witnessPub);
     ByteString witnessAddrBs = ByteString.copyFrom(witnessAddr);
-    byte[] signerAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, userPub);
+    byte[] signerAddr = PQSchemeRegistry.computeAddress(PQ_SCHEME, userPub);
     ByteString signerAddrBs = ByteString.copyFrom(signerAddr);
 
-    // Activate FN-DSA on the local chain params.
-    db.getDynamicPropertiesStore().saveAllowFnDsa512(1L);
+    // Activate the active scheme on the local chain params.
+    if (PQ_SCHEME == PQScheme.ML_DSA_44) {
+      db.getDynamicPropertiesStore().saveAllowMlDsa44(1L);
+    } else {
+      db.getDynamicPropertiesStore().saveAllowFnDsa512(1L);
+    }
     db.getDynamicPropertiesStore().saveAllowMultiSign(1L);
 
     // Witness account with FN-DSA-512 witness permission. Address-as-fingerprint
@@ -185,19 +196,27 @@ public class PQWitnessNode {
   }
 
   private static byte[] filledSeed(int value) {
-    byte[] seed = new byte[FNDSA512.SEED_LENGTH];
+    byte[] seed = new byte[PQSchemeRegistry.getSeedLength(PQ_SCHEME)];
     Arrays.fill(seed, (byte) value);
     return seed;
   }
 
-  private static Path writeWitnessConfig(FNDSA512 witnessKp) throws java.io.IOException {
+  private static Path writeWitnessConfig(PQSignature witnessKp) throws java.io.IOException {
     Path conf = Files.createTempFile("pqc-witness-", ".conf");
     conf.toFile().deleteOnExit();
+    // `localwitness_pq.keys` is the extended priv ‖ pub hex; Falcon exposes that
+    // explicitly while ML-DSA-44's expanded sk already lets BC recover the pk,
+    // so we just concatenate getPrivateKey() ‖ getPublicKey() for both schemes.
+    byte[] priv = witnessKp.getPrivateKey();
+    byte[] pub = witnessKp.getPublicKey();
+    byte[] extended = new byte[priv.length + pub.length];
+    System.arraycopy(priv, 0, extended, 0, priv.length);
+    System.arraycopy(pub, 0, extended, priv.length, pub.length);
     String body = "include classpath(\"config-test.conf\")\n"
         + "localwitness_pq = {\n"
-        + "  scheme = \"FN_DSA_512\"\n"
+        + "  scheme = \"" + PQ_SCHEME.name() + "\"\n"
         + "  keys = [\n"
-        + "    \"" + Hex.toHexString(witnessKp.getPrivateKeyWithPublicKey()) + "\"\n"
+        + "    \"" + Hex.toHexString(extended) + "\"\n"
         + "  ]\n"
         + "}\n";
     Files.write(conf, body.getBytes(StandardCharsets.UTF_8));

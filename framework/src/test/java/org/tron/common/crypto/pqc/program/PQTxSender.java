@@ -14,7 +14,8 @@ import org.tron.api.WalletGrpc;
 import org.tron.api.WalletGrpc.WalletBlockingStub;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.crypto.ECKey.ECDSASignature;
-import org.tron.common.crypto.pqc.FNDSA512;
+import org.tron.common.crypto.pqc.PQSchemeRegistry;
+import org.tron.common.crypto.pqc.PQSignature;
 import org.tron.common.math.StrictMathWrapper;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.ByteArray;
@@ -25,6 +26,7 @@ import org.tron.common.utils.client.utils.AbiUtil;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.protos.Protocol.Block;
 import org.tron.protos.Protocol.PQAuthSig;
+import org.tron.protos.Protocol.PQScheme;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.contract.BalanceContract.TransferContract;
@@ -32,7 +34,8 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 
 /**
  * Demo client that connects to {@link PQWitnessNode} and continuously broadcasts transfer and
- * TRC20 transactions signed by FN-DSA-512 and ECDSA.
+ * TRC20 transactions signed by a configurable PQ scheme ({@code -Dpqc.scheme}, default
+ * FN_DSA_512; must match the witness node) and ECDSA.
  * <p>
  * The FN-DSA-512 keypair is derived from the same fixed seed used by PQWitnessNode, so no
  * out-of-band key exchange is needed. ECDSA transactions use -Decdsa.private.key.
@@ -57,6 +60,8 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
  */
 public class PQTxSender {
 
+  private static final PQScheme PQ_SCHEME = PQScheme.valueOf(
+      System.getProperty("pqc.scheme", PQScheme.FN_DSA_512.name()));
   private static final String HOST =
       System.getProperty("pqc.host", "localhost");
   private static final int PORT =
@@ -115,13 +120,12 @@ public class PQTxSender {
         .setLevel(ch.qos.logback.classic.Level.INFO);
 
     // ── 1. Derive user keypair from same fixed seed as PQWitnessNode ─────
-    byte[] userSeed = new byte[FNDSA512.SEED_LENGTH];
+    byte[] userSeed = new byte[PQSchemeRegistry.getSeedLength(PQ_SCHEME)];
     Arrays.fill(userSeed, (byte) 0x02);
-    FNDSA512 userKp = new FNDSA512(userSeed);
+    PQSignature userKp = PQSchemeRegistry.fromSeed(PQ_SCHEME, userSeed);
 
     byte[] userPub = userKp.getPublicKey();
-    byte[] userPriv = userKp.getPrivateKey();
-    byte[] signerAddr = FNDSA512.computeAddress(userPub);
+    byte[] signerAddr = userKp.getAddress();
     byte[] ownerAddr = Commons.decodeFromBase58Check("TJUfbazhixG4YtqJxUDmv5XisZvvy1wP91");
     ECKey ecdsaKey = ECKey.fromPrivate(
         ByteArray.fromHexString(System.getProperty("ecdsa.private.key",
@@ -134,6 +138,7 @@ public class PQTxSender {
 
     System.out.println("=== PQC/ECDSA Tx Sender ===");
     System.out.println("Connecting to " + HOST + ":" + PORT);
+    System.out.println("PQC scheme:           " + PQ_SCHEME);
     System.out.println("PQC owner address:    " + ByteArray.toHexString(ownerAddr));
     System.out.println("PQC signer address:   " + ByteArray.toHexString(signerAddr));
     System.out.println("PQC transfer TPS:     " + transferTps);
@@ -151,10 +156,10 @@ public class PQTxSender {
 
     try {
       Thread transferThread = new Thread(
-          () -> runTransferLoop(stub, ownerAddr, userPub, userPriv, transferTps),
+          () -> runTransferLoop(stub, ownerAddr, userKp, transferTps),
           "pqc-transfer-sender-grpc");
       Thread trc20Thread = new Thread(
-          () -> runTrc20Loop(stub, ownerAddr, userPub, userPriv, trc20Tps),
+          () -> runTrc20Loop(stub, ownerAddr, userKp, trc20Tps),
           "pqc-trc20-sender-grpc");
       Thread ecdsaTransferThread = new Thread(
           () -> runEcdsaTransferLoop(stub, ecdsaOwnerAddr, ecdsaKey, ecdsaTransferTps),
@@ -191,7 +196,7 @@ public class PQTxSender {
   }
 
   private static void runTransferLoop(WalletBlockingStub stub, byte[] ownerAddr,
-      byte[] userPub, byte[] userPriv, double tps) {
+      PQSignature userKp, double tps) {
     if (tps <= 0) {
       System.out.println("pqc transfer sender disabled");
       return;
@@ -200,13 +205,13 @@ public class PQTxSender {
     long counter = 1L;
     while (!Thread.currentThread().isInterrupted()) {
       long loopStart = System.currentTimeMillis();
-      sendTransferTransaction(stub, ownerAddr, userPub, userPriv, counter++);
+      sendTransferTransaction(stub, ownerAddr, userKp, counter++);
       sleepRemaining(intervalMs, loopStart);
     }
   }
 
   private static void runTrc20Loop(WalletBlockingStub stub, byte[] ownerAddr,
-      byte[] userPub, byte[] userPriv, double tps) {
+      PQSignature userKp, double tps) {
     if (tps <= 0) {
       System.out.println("pqc trc20 sender disabled");
       return;
@@ -215,7 +220,7 @@ public class PQTxSender {
     long counter = 1L;
     while (!Thread.currentThread().isInterrupted()) {
       long loopStart = System.currentTimeMillis();
-      sendTrc20Transaction(stub, ownerAddr, userPub, userPriv, counter++);
+      sendTrc20Transaction(stub, ownerAddr, userKp, counter++);
       sleepRemaining(intervalMs, loopStart);
     }
   }
@@ -251,7 +256,7 @@ public class PQTxSender {
   }
 
   private static void sendTransferTransaction(WalletBlockingStub stub, byte[] ownerAddr,
-      byte[] userPub, byte[] userPriv, long seq) {
+      PQSignature userKp, long seq) {
     try {
       WalletBlockingStub timedStub = stub.withDeadlineAfter(10, TimeUnit.SECONDS);
 
@@ -264,10 +269,11 @@ public class PQTxSender {
 
       Transaction tx = buildTransferTransaction(ownerAddr, blockHash, refNum);
       byte[] txId = sha256(tx.getRawData().toByteArray());
-      byte[] sig = FNDSA512.sign(userPriv, txId);
+      byte[] sig = userKp.sign(txId);
       Transaction signedTx = tx.toBuilder()
           .addPqAuthSig(PQAuthSig.newBuilder()
-              .setPublicKey(ByteString.copyFrom(userPub))
+              .setScheme(PQ_SCHEME)
+              .setPublicKey(ByteString.copyFrom(userKp.getPublicKey()))
               .setSignature(ByteString.copyFrom(sig)))
           .build();
 
@@ -282,7 +288,7 @@ public class PQTxSender {
   }
 
   private static void sendTrc20Transaction(WalletBlockingStub stub, byte[] ownerAddr,
-      byte[] userPub, byte[] userPriv, long seq) {
+      PQSignature userKp, long seq) {
     try {
       WalletBlockingStub timedStub = stub.withDeadlineAfter(10, TimeUnit.SECONDS);
 
@@ -299,10 +305,11 @@ public class PQTxSender {
       tx = tx.toBuilder().setRawData(rawBuilder).build();
 
       byte[] txId = sha256(tx.getRawData().toByteArray());
-      byte[] sig = FNDSA512.sign(userPriv, txId);
+      byte[] sig = userKp.sign(txId);
       Transaction signedTx = tx.toBuilder()
           .addPqAuthSig(PQAuthSig.newBuilder()
-              .setPublicKey(ByteString.copyFrom(userPub))
+              .setScheme(PQ_SCHEME)
+              .setPublicKey(ByteString.copyFrom(userKp.getPublicKey()))
               .setSignature(ByteString.copyFrom(sig)))
           .build();
 
