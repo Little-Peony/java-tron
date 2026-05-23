@@ -1,6 +1,7 @@
 package org.tron.core.capsule;
 
 import com.google.protobuf.ByteString;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -43,6 +44,18 @@ public class BlockCapsulePQTest extends BaseTest {
     pqKeypair = new FNDSA512();
     pqAddress = PQSchemeRegistry.computeAddress(
         PQScheme.FN_DSA_512, pqKeypair.getPublicKey());
+  }
+
+  /**
+   * Reset every PQ-scheme activation flag. Without this, a test that flips
+   * {@code allowFnDsa512} or {@code allowMlDsa44} on leaks the bit into the
+   * next test's {@code isAnyPqSchemeAllowed()} check — which is how the
+   * legacy-only "before activation" cases became order-dependent.
+   */
+  @After
+  public void resetPqFlags() {
+    dbManager.getDynamicPropertiesStore().saveAllowFnDsa512(0L);
+    dbManager.getDynamicPropertiesStore().saveAllowMlDsa44(0L);
   }
 
   /**
@@ -135,6 +148,10 @@ public class BlockCapsulePQTest extends BaseTest {
   @Test(expected = ValidateSignatureException.class)
   public void pqAuthSigBeforeActivationRejected() throws Exception {
     dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1L);
+    // Keep the PQ surface on (mlDsa44=1) so validateSignature enters the PQ
+    // branch, but leave fnDsa512=0 — this is the per-scheme activation gate
+    // we expect to reject the block at.
+    dbManager.getDynamicPropertiesStore().saveAllowMlDsa44(1L);
     dbManager.getDynamicPropertiesStore().saveAllowFnDsa512(0L);
     AccountCapsule witness = buildWitnessAccount(pqAddress);
     dbManager.getAccountStore().put(witnessAddress, witness);

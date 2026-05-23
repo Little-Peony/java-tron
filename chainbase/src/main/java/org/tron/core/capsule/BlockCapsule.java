@@ -215,7 +215,7 @@ public class BlockCapsule implements ProtoCapsule<Block> {
     if (dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
       boolean hasLegacy = !header.getWitnessSignature().isEmpty();
       boolean hasPq = header.hasPqAuthSig();
-      if (hasLegacy && hasLegacy) {
+      if (hasLegacy && hasPq) {
         throw new ValidateSignatureException(
             "witness_signature and pq_auth_sig are mutually exclusive");
       }
@@ -405,7 +405,15 @@ public class BlockCapsule implements ProtoCapsule<Block> {
     if (!dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
       return hasLegacySignature;
     }
-    return hasLegacySignature || !header.getPqAuthSig().getSignature().isEmpty();
+    if (hasLegacySignature) {
+      return true;
+    }
+    PQAuthSig pqSig = header.getPqAuthSig();
+    PQScheme scheme = pqSig.getScheme();
+    if (!PQSchemeRegistry.contains(scheme)) {
+      return false;
+    }
+    return PQSchemeRegistry.isValidSignatureLength(scheme, pqSig.getSignature().size());
   }
 
   @Override
