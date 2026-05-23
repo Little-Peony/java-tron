@@ -18,7 +18,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.mockito.Mockito;
 import org.springframework.context.ApplicationContext;
@@ -65,13 +64,9 @@ public class RelayServiceTest extends BaseTest {
   @Resource
   private TronNetService tronNetService;
 
-  /**
-   * init context.
-   */
-  @BeforeClass
-  public static void init() {
+  static {
     Args.setParam(new String[]{"--output-directory", dbPath(), "--debug"},
-            TestConstants.TEST_CONF);
+        TestConstants.TEST_CONF);
   }
 
   @After

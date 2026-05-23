@@ -212,20 +212,33 @@ public class BlockCapsule implements ProtoCapsule<Block> {
           .getWitnessPermissionAddress();
     }
 
-    if (dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
-      boolean hasLegacy = !header.getWitnessSignature().isEmpty();
-      boolean hasPq = header.hasPqAuthSig();
-      if (hasLegacy && hasPq) {
+    boolean hasLegacy = !header.getWitnessSignature().isEmpty();
+    boolean hasPq = header.hasPqAuthSig();
+
+    if (!dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
+      if (hasPq) {
         throw new ValidateSignatureException(
-            "witness_signature and pq_auth_sig are mutually exclusive");
+            "pq_auth_sig not allowed: no post-quantum scheme is activated");
       }
-      if (!hasLegacy && !hasPq) {
-        throw new ValidateSignatureException("missing witness signature");
-      }
-      return validatePQSignature(dynamicPropertiesStore, accountStore, witnessPermissionAddress,
-          header.getPqAuthSig());
+      return validateLegacySignature(header, witnessPermissionAddress);
     }
 
+    if (hasLegacy && hasPq) {
+      throw new ValidateSignatureException(
+          "witness_signature and pq_auth_sig are mutually exclusive");
+    }
+    if (!hasLegacy && !hasPq) {
+      throw new ValidateSignatureException("missing witness signature");
+    }
+    if (hasPq) {
+      return validatePQSignature(dynamicPropertiesStore, witnessPermissionAddress,
+          header.getPqAuthSig());
+    }
+    return validateLegacySignature(header, witnessPermissionAddress);
+  }
+
+  private boolean validateLegacySignature(BlockHeader header, byte[] witnessPermissionAddress)
+      throws ValidateSignatureException {
     try {
       byte[] sigAddress = SignUtils.signatureToAddress(getRawHash().getBytes(),
           TransactionCapsule.getBase64FromByteString(header.getWitnessSignature()),
@@ -243,7 +256,7 @@ public class BlockCapsule implements ProtoCapsule<Block> {
    * the witness account's Witness Permission keys[].
    */
   private boolean validatePQSignature(DynamicPropertiesStore dynamicPropertiesStore,
-      AccountStore accountStore, byte[] witnessPermissionAddress, PQAuthSig pqAuthSig)
+      byte[] witnessPermissionAddress, PQAuthSig pqAuthSig)
       throws ValidateSignatureException {
     /*
       Verify the PQ scheme is supported and proposal opened
@@ -401,19 +414,13 @@ public class BlockCapsule implements ProtoCapsule<Block> {
 
   public boolean hasWitnessSignature(DynamicPropertiesStore dynamicPropertiesStore) {
     BlockHeader header = getInstance().getBlockHeader();
-    boolean hasLegacySignature = !header.getWitnessSignature().isEmpty();
-    if (!dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
-      return hasLegacySignature;
-    }
-    if (hasLegacySignature) {
+    if (!header.getWitnessSignature().isEmpty()) {
       return true;
     }
-    PQAuthSig pqSig = header.getPqAuthSig();
-    PQScheme scheme = pqSig.getScheme();
-    if (!PQSchemeRegistry.contains(scheme)) {
+    if (!dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
       return false;
     }
-    return PQSchemeRegistry.isValidSignatureLength(scheme, pqSig.getSignature().size());
+    return !header.getPqAuthSig().getSignature().isEmpty();
   }
 
   @Override

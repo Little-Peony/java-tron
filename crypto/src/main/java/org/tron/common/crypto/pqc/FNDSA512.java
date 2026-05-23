@@ -55,6 +55,7 @@ public final class FNDSA512 implements PQSignature {
   public static final int SEED_LENGTH = 48;
 
   private static final FalconParameters PARAMS = FalconParameters.falcon_512;
+  private static final SecureRandom SIGNING_RNG = new SecureRandom();
 
   private final byte[] privateKey;
   private final byte[] publicKey;
@@ -220,7 +221,7 @@ public final class FNDSA512 implements PQSignature {
     System.arraycopy(privateKey, f.length + g.length, bigF, 0, bigF.length);
     FalconPrivateKeyParameters sk = new FalconPrivateKeyParameters(PARAMS, f, g, bigF, new byte[0]);
     FalconSigner signer = new FalconSigner();
-    signer.init(true, new ParametersWithRandom(sk, new SecureRandom()));
+    signer.init(true, new ParametersWithRandom(sk, SIGNING_RNG));
     try {
       return signer.generateSignature(message);
     } catch (Exception e) {
@@ -238,7 +239,10 @@ public final class FNDSA512 implements PQSignature {
    * See bcgit/bc-java#2297.
    */
   public static byte[] derivePublicKey(byte[] privateKey) {
-    if (privateKey != null && privateKey.length == PRIVATE_KEY_WITH_PUBLIC_KEY_LENGTH) {
+    if (privateKey == null) {
+      throw new IllegalArgumentException("privateKey must not be null");
+    }
+    if (privateKey.length == PRIVATE_KEY_WITH_PUBLIC_KEY_LENGTH) {
       byte[] pk = new byte[PUBLIC_KEY_LENGTH];
       System.arraycopy(privateKey, PRIVATE_KEY_LENGTH, pk, 0, PUBLIC_KEY_LENGTH);
       return pk;

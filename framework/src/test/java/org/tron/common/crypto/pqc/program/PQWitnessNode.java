@@ -204,9 +204,11 @@ public class PQWitnessNode {
   private static Path writeWitnessConfig(PQSignature witnessKp) throws java.io.IOException {
     Path conf = Files.createTempFile("pqc-witness-", ".conf");
     conf.toFile().deleteOnExit();
-    // `localwitness_pq.keys` is the extended priv ‖ pub hex; Falcon exposes that
-    // explicitly while ML-DSA-44's expanded sk already lets BC recover the pk,
-    // so we just concatenate getPrivateKey() ‖ getPublicKey() for both schemes.
+    // `localwitness_pq.keys` entries carry their own scheme so a single node can
+    // host SRs running different PQ algorithms. The key value is the extended
+    // priv ‖ pub hex; Falcon exposes that explicitly while ML-DSA-44's expanded
+    // sk already lets BC recover the pk, so we just concatenate
+    // getPrivateKey() ‖ getPublicKey() for both schemes.
     byte[] priv = witnessKp.getPrivateKey();
     byte[] pub = witnessKp.getPublicKey();
     byte[] extended = new byte[priv.length + pub.length];
@@ -214,9 +216,9 @@ public class PQWitnessNode {
     System.arraycopy(pub, 0, extended, priv.length, pub.length);
     String body = "include classpath(\"config-test.conf\")\n"
         + "localwitness_pq = {\n"
-        + "  scheme = \"" + PQ_SCHEME.name() + "\"\n"
         + "  keys = [\n"
-        + "    \"" + Hex.toHexString(extended) + "\"\n"
+        + "    { scheme = \"" + PQ_SCHEME.name() + "\","
+        + " key = \"" + Hex.toHexString(extended) + "\" }\n"
         + "  ]\n"
         + "}\n";
     Files.write(conf, body.getBytes(StandardCharsets.UTF_8));

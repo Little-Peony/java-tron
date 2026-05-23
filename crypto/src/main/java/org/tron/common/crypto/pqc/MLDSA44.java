@@ -1,6 +1,6 @@
 package org.tron.common.crypto.pqc;
 
-import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
 import org.bouncycastle.crypto.params.ParametersWithRandom;
@@ -212,27 +212,20 @@ public final class MLDSA44 implements PQSignature {
   }
 
   /**
-   * Domain-separated probe used by {@link #requireConsistent}; not a security
-   * boundary (ML-DSA hashes the message internally), the constant just makes the
-   * keypair self-check searchable in logs/stack traces.
-   */
-  private static final byte[] CONSISTENCY_PROBE =
-      "tron:ML-DSA-44:keypair-consistency-probe".getBytes(StandardCharsets.UTF_8);
-
-  /**
-   * Probe that the supplied (sk, pk) actually form a keypair. Sign and verify
-   * a fixed probe message; runs once per witness load and costs a few ms on
-   * ML-DSA-44 — acceptable for a startup-time misconfiguration check, and
-   * avoids advertising an address that signatures will never satisfy.
+   * Probe that the supplied (sk, pk) actually form a keypair. ML-DSA's
+   * expanded private key already carries everything needed to reproduce the
+   * canonical public encoding {@code rho ‖ t1}, so we derive {@code pk} from
+   * {@code sk} and compare bytes — cheaper and more precise than a
+   * sign+verify roundtrip, and free of the RNG path used by signing.
    */
   private static void requireConsistent(byte[] privateKey, byte[] publicKey) {
-    byte[] sig;
+    byte[] derived;
     try {
-      sig = sign(privateKey, CONSISTENCY_PROBE);
+      derived = derivePublicKey(privateKey);
     } catch (RuntimeException e) {
-      throw new IllegalArgumentException("ML-DSA private/public key mismatch", e);
+      throw new IllegalArgumentException("ML-DSA private key is malformed", e);
     }
-    if (!verify(publicKey, CONSISTENCY_PROBE, sig)) {
+    if (!MessageDigest.isEqual(derived, publicKey)) {
       throw new IllegalArgumentException("ML-DSA private/public key mismatch");
     }
   }

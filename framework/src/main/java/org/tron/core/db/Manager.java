@@ -1747,8 +1747,8 @@ public class Manager {
     session.reset();
 
     blockCapsule.setMerkleRoot();
-    if (getDynamicPropertiesStore().isAnyPqSchemeAllowed() &&
-        miner.getPqScheme() != null) {
+    if (getDynamicPropertiesStore().isAnyPqSchemeAllowed()
+        && miner.getPqScheme() != null) {
       signBlockCapsuleWithPQ(blockCapsule, miner);
     } else {
       blockCapsule.sign(miner.getPrivateKey());

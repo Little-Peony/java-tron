@@ -376,7 +376,7 @@ public class FNDSA512Test {
     assertArrayEquals(keypair.getPublicKey(), derived);
   }
 
-  @Test(expected = UnsupportedOperationException.class)
+  @Test(expected = IllegalArgumentException.class)
   public void derivePublicKeyRejectsNull() {
     FNDSA512.derivePublicKey(null);
   }

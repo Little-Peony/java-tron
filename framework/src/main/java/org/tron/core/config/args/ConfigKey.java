@@ -8,8 +8,6 @@ public final class ConfigKey {
 
   public static final String LOCAL_WITNESS_PQ_KEYS = "localwitness_pq.keys";
 
-  public static final String LOCAL_WITNESS_PQ_SCHEME = "localwitness_pq.scheme";
-
   private ConfigKey() {
   }
 }

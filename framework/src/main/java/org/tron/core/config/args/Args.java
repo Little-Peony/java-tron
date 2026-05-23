@@ -21,7 +21,6 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,6 +36,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.bouncycastle.util.encoders.Hex;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.arch.Arch;
@@ -45,6 +45,7 @@ import org.tron.common.args.GenesisBlock;
 import org.tron.common.args.Witness;
 import org.tron.common.cron.CronExpression;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
+import org.tron.common.crypto.pqc.PQSignature;
 import org.tron.common.crypto.pqc.PqKeypair;
 import org.tron.common.logsfilter.EventPluginConfig;
 import org.tron.common.logsfilter.FilterQuery;
@@ -930,9 +931,6 @@ public class Args extends CommonParameter {
     }
   }
 
-  private static final EnumSet<PQScheme> WITNESS_PQ_SCHEMES = EnumSet.of(
-      PQScheme.FN_DSA_512, PQScheme.ML_DSA_44);
-
   private static void initLocalWitnesses(Config config, CLIParameter cmd) {
     // not a witness node, skip
     if (!PARAMETER.isWitness()) {
@@ -945,88 +943,165 @@ public class Args extends CommonParameter {
     boolean hasCfgPriv = !lwConfig.getPrivateKeys().isEmpty();
     boolean hasKeystore = !lwConfig.getKeystores().isEmpty();
     boolean hasPqKeys = config.hasPath(ConfigKey.LOCAL_WITNESS_PQ_KEYS)
-        && !config.getStringList(ConfigKey.LOCAL_WITNESS_PQ_KEYS).isEmpty();
-    if (hasPqKeys && (hasCliPriv || hasCfgPriv || hasKeystore)) {
-      throw new TronError(
-          "legacy witness keys (CLI --private-key, localwitness, localwitnesskeystore) "
-              + "and " + ConfigKey.LOCAL_WITNESS_PQ_KEYS + " are mutually exclusive",
+        && !config.getConfigList(ConfigKey.LOCAL_WITNESS_PQ_KEYS).isEmpty();
+
+    // Load the ECDSA source. CLI > config localwitness > keystore — the three
+    // legacy sources stay mutually exclusive among themselves.
+    LocalWitnesses ecdsaWitnesses = null;
+    if (hasCliPriv) {
+      ecdsaWitnesses = WitnessInitializer.initFromCLIPrivateKey(
+          cmd.privateKey, cmd.witnessAddress);
+    } else if (hasCfgPriv) {
+      ecdsaWitnesses = WitnessInitializer.initFromCFGPrivateKey(
+          lwConfig.getPrivateKeys(), lwConfig.getAccountAddress());
+    } else if (hasKeystore) {
+      ecdsaWitnesses = WitnessInitializer.initFromKeystore(
+          lwConfig.getKeystores(), cmd.password, lwConfig.getAccountAddress());
+    }
+
+    // Load PQ keypairs independently so a node can host a mix of ECDSA and PQ
+    // SRs (e.g. during a rolling migration where some SRs have moved to PQ and
+    // others have not yet).
+    LocalWitnesses pqWitnesses = null;
+    if (hasPqKeys) {
+      // localWitnessAccountAddress overrides the on-chain witness address for
+      // the single-witness case. In mixed mode (ECDSA + PQ) it is ambiguous,
+      // so refuse it and require each entry's address to be derived from its
+      // own key material.
+      String pqAccountAddress =
+          ecdsaWitnesses == null ? lwConfig.getAccountAddress() : null;
+      if (ecdsaWitnesses != null
+          && StringUtils.isNotBlank(lwConfig.getAccountAddress())) {
+        throw new TronError(
+            "localWitnessAccountAddress cannot be combined with both legacy and "
+                + ConfigKey.LOCAL_WITNESS_PQ_KEYS + "; remove the override or "
+                + "configure only one key source",
+            TronError.ErrCode.WITNESS_INIT);
+      }
+      pqWitnesses = buildPqWitnesses(config, pqAccountAddress);
+    }
+
+    if (ecdsaWitnesses == null && pqWitnesses == null) {
+      // no private key source configured
+      throw new TronError("This is a witness node, but localWitnesses is null",
           TronError.ErrCode.WITNESS_INIT);
     }
 
-    // path 1: CLI --private-key
-    if (hasCliPriv) {
-      localWitnesses = WitnessInitializer.initFromCLIPrivateKey(
-          cmd.privateKey, cmd.witnessAddress);
-      return;
+    if (ecdsaWitnesses != null && pqWitnesses != null) {
+      LocalWitnesses merged = new LocalWitnesses();
+      merged.setPrivateKeys(ecdsaWitnesses.getPrivateKeys());
+      merged.setPqKeypairs(pqWitnesses.getPqKeypairs());
+      // No witnessAccountAddress in mixed mode: each entry derives its own.
+      localWitnesses = merged;
+    } else if (ecdsaWitnesses != null) {
+      localWitnesses = ecdsaWitnesses;
+    } else {
+      localWitnesses = pqWitnesses;
     }
+  }
 
-    // path 2: config localwitness (private key list)
-    if (hasCfgPriv) {
-      localWitnesses = WitnessInitializer.initFromCFGPrivateKey(
-          lwConfig.getPrivateKeys(), lwConfig.getAccountAddress());
-      return;
-    }
-
-    // path 3: config localwitnesskeystore + password
-    if (hasKeystore) {
-      localWitnesses = WitnessInitializer.initFromKeystore(
-          lwConfig.getKeystores(), cmd.password, lwConfig.getAccountAddress());
-      return;
-    }
-
-    // path 4: PQ pre-derived keypair configuration
-    if (config.hasPath(ConfigKey.LOCAL_WITNESS_PQ_KEYS)) {
-      List<String> pqEntries = config.getStringList(ConfigKey.LOCAL_WITNESS_PQ_KEYS);
-      if (!pqEntries.isEmpty()) {
-        PQScheme scheme = PQScheme.FN_DSA_512;
-        if (config.hasPath(ConfigKey.LOCAL_WITNESS_PQ_SCHEME)) {
-          String schemeName = config.getString(ConfigKey.LOCAL_WITNESS_PQ_SCHEME);
-          try {
-            scheme = PQScheme.valueOf(schemeName);
-          } catch (IllegalArgumentException e) {
-            throw new TronError("invalid " + ConfigKey.LOCAL_WITNESS_PQ_SCHEME
-                + ": " + schemeName, TronError.ErrCode.WITNESS_INIT);
-          }
-          if (!WITNESS_PQ_SCHEMES.contains(scheme)) {
-            throw new TronError("invalid " + ConfigKey.LOCAL_WITNESS_PQ_SCHEME
-                + ": " + schemeName + "; valid values: " + WITNESS_PQ_SCHEMES,
-                TronError.ErrCode.WITNESS_INIT);
-          }
-        }
-        // Each entry is the extended private key f‖g‖F‖h (priv ‖ pub) hex,
-        // sized (privLen + pubLen) bytes for the active scheme. We split here
-        // into PqKeypair entries so downstream consumers (ConsensusService,
-        // LocalWitnesses) get the priv/pub halves bundled — derivePublicKey
-        // (priv) replaces the previous explicit `pub` config field.
+  private static LocalWitnesses buildPqWitnesses(Config config, String accountAddress) {
+    // Each entry is an object { scheme = "<PQScheme>", key | seed = "<hex>" }
+    // so a single node can host SRs running different PQ algorithms (e.g.
+    // Falcon-512 and ML-DSA-44 side by side). `key` carries the expanded
+    // priv‖pub hex (any scheme); `seed` carries the keygen seed hex and is
+    // accepted only when PQSchemeRegistry.isSeedDeterministic(scheme) is true.
+    List<? extends Config> pqEntries =
+        config.getConfigList(ConfigKey.LOCAL_WITNESS_PQ_KEYS);
+    List<PqKeypair> pqKeypairs = new ArrayList<>(pqEntries.size());
+    for (int i = 0; i < pqEntries.size(); i++) {
+      Config entry = pqEntries.get(i);
+      if (!entry.hasPath("scheme")) {
+        throw new TronError(String.format(
+            "%s[%d] must define `scheme`",
+            ConfigKey.LOCAL_WITNESS_PQ_KEYS, i),
+            TronError.ErrCode.WITNESS_INIT);
+      }
+      boolean hasKey = entry.hasPath("key");
+      boolean hasSeed = entry.hasPath("seed");
+      if (hasKey == hasSeed) {
+        throw new TronError(String.format(
+            "%s[%d] must define exactly one of `key` or `seed`",
+            ConfigKey.LOCAL_WITNESS_PQ_KEYS, i),
+            TronError.ErrCode.WITNESS_INIT);
+      }
+      String schemeName = entry.getString("scheme");
+      PQScheme scheme;
+      try {
+        scheme = PQScheme.valueOf(schemeName);
+      } catch (IllegalArgumentException e) {
+        throw new TronError(String.format("invalid %s[%d].scheme: %s",
+            ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, schemeName),
+            TronError.ErrCode.WITNESS_INIT);
+      }
+      if (!PQSchemeRegistry.contains(scheme)) {
+        throw new TronError(String.format(
+            "unsupported %s[%d].scheme: %s; registered schemes: %s",
+            ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, schemeName,
+            PQSchemeRegistry.registeredSchemes()),
+            TronError.ErrCode.WITNESS_INIT);
+      }
+      String privHex;
+      String pubHex;
+      if (hasKey) {
         int privHexLen = PQSchemeRegistry.getPrivateKeyLength(scheme) * 2;
         int extHexLen = privHexLen + PQSchemeRegistry.getPublicKeyLength(scheme) * 2;
-        List<PqKeypair> pqKeypairs = new ArrayList<>(pqEntries.size());
-        for (int i = 0; i < pqEntries.size(); i++) {
-          String hex = pqEntries.get(i);
-          String stripped = hex;
-          if (hex != null && (hex.startsWith("0x") || hex.startsWith("0X"))) {
-            stripped = hex.substring(2);
-          }
-          if (stripped == null || stripped.length() != extHexLen) {
-            throw new TronError(String.format(
-                "%s[%d] must be %d hex chars (extended priv‖pub for %s), actual: %d",
-                ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, extHexLen, scheme,
-                stripped == null ? 0 : stripped.length()),
-                TronError.ErrCode.WITNESS_INIT);
-          }
-          pqKeypairs.add(new PqKeypair(
-              stripped.substring(0, privHexLen),
-              stripped.substring(privHexLen)));
+        String stripped = stripHexPrefix(entry.getString("key"));
+        if (stripped == null || stripped.length() != extHexLen) {
+          throw new TronError(String.format(
+              "%s[%d].key must be %d hex chars (extended priv‖pub for %s), actual: %d",
+              ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, extHexLen, scheme,
+              stripped == null ? 0 : stripped.length()),
+              TronError.ErrCode.WITNESS_INIT);
         }
-        localWitnesses = WitnessInitializer.initFromPQOnly(
-            scheme, pqKeypairs, lwConfig.getAccountAddress());
-        return;
+        privHex = stripped.substring(0, privHexLen);
+        pubHex = stripped.substring(privHexLen);
+      } else {
+        if (!PQSchemeRegistry.isSeedDeterministic(scheme)) {
+          // Falcon's FFT-based keygen drifts across JVMs/architectures, so
+          // seed-only config would produce different witness keys on
+          // different nodes. Force operators to commit the expanded keypair.
+          throw new TronError(String.format(
+              "%s[%d].seed is not supported for %s (non-deterministic keygen); "
+                  + "use `key` with the extended priv‖pub hex instead",
+              ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, scheme),
+              TronError.ErrCode.WITNESS_INIT);
+        }
+        int seedHexLen = PQSchemeRegistry.getSeedLength(scheme) * 2;
+        String stripped = stripHexPrefix(entry.getString("seed"));
+        if (stripped == null || stripped.length() != seedHexLen) {
+          throw new TronError(String.format(
+              "%s[%d].seed must be %d hex chars for %s, actual: %d",
+              ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, seedHexLen, scheme,
+              stripped == null ? 0 : stripped.length()),
+              TronError.ErrCode.WITNESS_INIT);
+        }
+        byte[] seedBytes;
+        try {
+          seedBytes = Hex.decode(stripped);
+        } catch (RuntimeException e) {
+          throw new TronError(String.format(
+              "%s[%d].seed is not valid hex for %s: %s",
+              ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, scheme, e.getMessage()),
+              TronError.ErrCode.WITNESS_INIT);
+        }
+        PQSignature derived = PQSchemeRegistry.fromSeed(scheme, seedBytes);
+        privHex = Hex.toHexString(derived.getPrivateKey());
+        pubHex = Hex.toHexString(derived.getPublicKey());
       }
+      pqKeypairs.add(new PqKeypair(scheme, privHex, pubHex));
     }
+    return WitnessInitializer.initFromPQOnly(pqKeypairs, accountAddress);
+  }
 
-    // no private key source configured
-    throw new TronError("This is a witness node, but localWitnesses is null",
-        TronError.ErrCode.WITNESS_INIT);
+  private static String stripHexPrefix(String hex) {
+    if (hex == null) {
+      return null;
+    }
+    if (hex.startsWith("0x") || hex.startsWith("0X")) {
+      return hex.substring(2);
+    }
+    return hex;
   }
 
   @VisibleForTesting

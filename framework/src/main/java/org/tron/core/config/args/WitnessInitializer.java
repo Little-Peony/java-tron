@@ -116,12 +116,13 @@ public class WitnessInitializer {
   }
 
   /**
-   * Init for PQ-only witness nodes (no legacy ECDSA key). When
-   * {@code witnessAccountAddress} is blank, the address is derived from the
-   * first PQ public key via {@link PQSchemeRegistry#computeAddress(PQScheme,
-   * byte[])}.
+   * Init for PQ-only witness nodes (no legacy ECDSA key). Each PqKeypair
+   * carries its own PQScheme. When {@code witnessAccountAddress} is blank,
+   * the address is derived from the first PQ public key via
+   * {@link PQSchemeRegistry#computeAddress(PQScheme, byte[])} using that
+   * entry's scheme.
    */
-  public static LocalWitnesses initFromPQOnly(PQScheme scheme,
+  public static LocalWitnesses initFromPQOnly(
       List<PqKeypair> pqKeypairs, String witnessAccountAddress) {
     if (pqKeypairs == null || pqKeypairs.isEmpty()) {
       throw new TronError(
@@ -129,13 +130,13 @@ public class WitnessInitializer {
           TronError.ErrCode.WITNESS_INIT);
     }
     LocalWitnesses witnesses = new LocalWitnesses();
-    witnesses.setPqScheme(scheme);
     witnesses.setPqKeypairs(pqKeypairs);
 
     byte[] address;
     if (StringUtils.isBlank(witnessAccountAddress)) {
-      byte[] firstPubKey = ByteArray.fromHexString(pqKeypairs.get(0).getPublicKey());
-      address = PQSchemeRegistry.computeAddress(scheme, firstPubKey);
+      PqKeypair first = pqKeypairs.get(0);
+      byte[] firstPubKey = ByteArray.fromHexString(first.getPublicKey());
+      address = PQSchemeRegistry.computeAddress(first.getScheme(), firstPubKey);
       logger.debug("Derived PQ-only witness address from public key");
     } else {
       if (pqKeypairs.size() != 1) {

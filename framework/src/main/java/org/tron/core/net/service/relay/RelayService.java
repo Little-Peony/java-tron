@@ -135,8 +135,8 @@ public class RelayService {
         builder.setSignature(sig).clearPqAuthSig();
       } else {
         LocalWitnesses lw = Args.getLocalWitnesses();
-        PQScheme scheme = lw.getPqScheme();
         PqKeypair kp = lw.getPqKeypairs().get(0);
+        PQScheme scheme = kp.getScheme();
         byte[] privKey = ByteArray.fromHexString(kp.getPrivateKey());
         byte[] pubKey = ByteArray.fromHexString(kp.getPublicKey());
         byte[] sig = PQSchemeRegistry.sign(scheme, privKey, digest);

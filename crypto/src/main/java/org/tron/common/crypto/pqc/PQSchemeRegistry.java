@@ -59,15 +59,21 @@ public final class PQSchemeRegistry {
     final int publicKeyLength;
     final int signatureLength;
     final int seedLength;
+    // Whether seed -> (priv, pub) derivation is bit-for-bit reproducible
+    // across platforms. Falcon's reference keygen uses FFT and is not stable
+    // across JVMs/architectures, so operators must persist the expanded
+    // priv‖pub rather than a seed.
+    final boolean seedDeterministic;
     final FingerprintHash hash;
     final SignatureOps ops;
 
     SchemeInfo(int privateKeyLength, int publicKeyLength, int signatureLength,
-        int seedLength, FingerprintHash hash, SignatureOps ops) {
+        int seedLength, boolean seedDeterministic, FingerprintHash hash, SignatureOps ops) {
       this.privateKeyLength = privateKeyLength;
       this.publicKeyLength = publicKeyLength;
       this.signatureLength = signatureLength;
       this.seedLength = seedLength;
+      this.seedDeterministic = seedDeterministic;
       this.hash = hash;
       this.ops = ops;
     }
@@ -80,6 +86,7 @@ public final class PQSchemeRegistry {
     m.put(PQScheme.FN_DSA_512, new SchemeInfo(
         FNDSA512.PRIVATE_KEY_LENGTH, FNDSA512.PUBLIC_KEY_LENGTH,
         FNDSA512.SIGNATURE_LENGTH, FNDSA512.SEED_LENGTH,
+        false, // Falcon keygen is FFT-based, not bit-stable across platforms.
         KECCAK_256,
         new SignatureOps() {
           @Override
@@ -105,6 +112,7 @@ public final class PQSchemeRegistry {
     m.put(PQScheme.ML_DSA_44, new SchemeInfo(
         MLDSA44.PRIVATE_KEY_LENGTH, MLDSA44.PUBLIC_KEY_LENGTH,
         MLDSA44.SIGNATURE_LENGTH, MLDSA44.SEED_LENGTH,
+        true, // FIPS-204 keygen is pure integer arithmetic and reproducible.
         KECCAK_256,
         new SignatureOps() {
           @Override
@@ -175,6 +183,16 @@ public final class PQSchemeRegistry {
 
   public static int getSeedLength(PQScheme scheme) {
     return require(scheme).seedLength;
+  }
+
+  /**
+   * Whether seed -> keypair derivation is bit-for-bit reproducible across
+   * platforms. Operators may safely persist a seed (instead of the expanded
+   * priv‖pub) only when this is {@code true}; otherwise different JVMs /
+   * architectures may derive divergent private keys from the same seed.
+   */
+  public static boolean isSeedDeterministic(PQScheme scheme) {
+    return require(scheme).seedDeterministic;
   }
 
   /**

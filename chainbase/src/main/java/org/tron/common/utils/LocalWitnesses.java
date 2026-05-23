@@ -38,10 +38,11 @@ public class LocalWitnesses {
   private List<String> privateKeys = Lists.newArrayList();
 
   /**
-   * Pre-derived PQ keypairs (private + public, hex), one per witness. The
-   * expected byte lengths depend on {@link #pqScheme}: for FN-DSA-512 each
-   * private key is 1280 bytes (2560 hex chars) and each public key is 896
-   * bytes (1792 hex chars).
+   * Pre-derived PQ keypairs (scheme + private + public, hex), one per witness.
+   * Each keypair declares its own PQ scheme so a single node can host SRs
+   * running different PQ algorithms (e.g. some Falcon-512, some ML-DSA-44).
+   * Expected byte lengths depend on the keypair's scheme: FN-DSA-512 uses a
+   * 1280-byte private key (2560 hex) and 896-byte public key (1792 hex).
    *
    * <p>Configured directly (rather than derived from a seed on the node) so
    * the runtime path is not exposed to potential cross-platform floating-point
@@ -50,18 +51,6 @@ public class LocalWitnesses {
    */
   @Getter
   private List<PqKeypair> pqKeypairs = Lists.newArrayList();
-
-  /** PQ signature scheme used by the configured {@link #pqKeypairs}. */
-  @Getter
-  private PQScheme pqScheme = PQScheme.FN_DSA_512;
-
-  public void setPqScheme(PQScheme pqScheme) {
-    if (pqScheme == null || !PQSchemeRegistry.contains(pqScheme)) {
-      throw new TronError("unsupported PQ signature scheme: " + pqScheme,
-          TronError.ErrCode.WITNESS_INIT);
-    }
-    this.pqScheme = pqScheme;
-  }
 
   @Setter
   @Getter
@@ -127,19 +116,23 @@ public class LocalWitnesses {
   }
 
   /**
-   * Pre-derived PQ keypairs (priv + pub) used as signing keys under
-   * {@link #pqScheme}. Each entry's private/public hex byte length must match
-   * the scheme's required size. Callers must therefore set the scheme via
-   * {@link #setPqScheme(PQScheme)} before calling this method when targeting a
-   * non-default scheme.
+   * Pre-derived PQ keypairs (scheme + priv + pub) used as signing keys. Each
+   * entry's scheme must be registered and its private/public hex byte lengths
+   * must match that scheme's required sizes; the scheme is per-entry so
+   * different witnesses on the same node can use different PQ algorithms.
    */
   public void setPqKeypairs(final List<PqKeypair> pqKeypairs) {
     if (CollectionUtils.isEmpty(pqKeypairs)) {
       return;
     }
-    int expectedPrivLen = PQSchemeRegistry.getPrivateKeyLength(pqScheme);
-    int expectedPubLen = PQSchemeRegistry.getPublicKeyLength(pqScheme);
     for (PqKeypair kp : pqKeypairs) {
+      PQScheme scheme = kp.getScheme();
+      if (scheme == null || !PQSchemeRegistry.contains(scheme)) {
+        throw new TronError("unsupported PQ signature scheme: " + scheme,
+            TronError.ErrCode.WITNESS_INIT);
+      }
+      int expectedPrivLen = PQSchemeRegistry.getPrivateKeyLength(scheme);
+      int expectedPubLen = PQSchemeRegistry.getPublicKeyLength(scheme);
       validatePqKey(kp.getPrivateKey(), expectedPrivLen, "PQ private key");
       validatePqKey(kp.getPublicKey(), expectedPubLen, "PQ public key");
     }

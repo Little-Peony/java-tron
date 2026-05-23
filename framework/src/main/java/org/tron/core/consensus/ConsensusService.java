@@ -52,11 +52,7 @@ public class ConsensusService {
     List<Miner> miners = new ArrayList<>();
     List<String> privateKeys = Args.getLocalWitnesses().getPrivateKeys();
     List<PqKeypair> pqKeypairs = Args.getLocalWitnesses().getPqKeypairs();
-    if (!privateKeys.isEmpty() && !pqKeypairs.isEmpty()) {
-      throw new TronError(
-          "legacy localwitness keys and localwitness_pq.keys are mutually exclusive",
-          TronError.ErrCode.WITNESS_INIT);
-    }
+
     if (privateKeys.size() > 1) {
       for (String key : privateKeys) {
         byte[] privateKey = fromHexString(key);
@@ -78,6 +74,12 @@ public class ConsensusService {
       byte[] privateKeyAddress = SignUtils.fromPrivate(privateKey,
           Args.getInstance().isECKeyCryptoEngine()).getAddress();
       byte[] witnessAddress = Args.getLocalWitnesses().getWitnessAccountAddress();
+      // In mixed (ECDSA + PQ) mode Args refuses the localWitnessAccountAddress
+      // override and leaves witnessAccountAddress null — fall back to the
+      // derived address so the single-witness path stays valid.
+      if (witnessAddress == null || witnessAddress.length == 0) {
+        witnessAddress = privateKeyAddress;
+      }
       WitnessCapsule witnessCapsule = witnessStore.get(witnessAddress);
       if (null == witnessCapsule) {
         logger.warn("Witness {} is not in witnessStore.", Hex.toHexString(witnessAddress));
@@ -87,10 +89,12 @@ public class ConsensusService {
       Miner miner = param.new Miner(privateKey, ByteString.copyFrom(privateKeyAddress),
           ByteString.copyFrom(witnessAddress));
       miners.add(miner);
-    } else if (pqKeypairs.size() > 1) {
-      PQScheme scheme = Args.getLocalWitnesses().getPqScheme();
-      requireSupportedPqScheme(scheme);
+    }
+
+    if (pqKeypairs.size() > 1) {
       for (PqKeypair kp : pqKeypairs) {
+        PQScheme scheme = kp.getScheme();
+        requireSupportedPqScheme(scheme);
         byte[] privBytes = fromHexString(kp.getPrivateKey());
         byte[] pubBytes = fromHexString(kp.getPublicKey());
         PQSignature keypair = PQSchemeRegistry.fromKeypair(scheme, privBytes, pubBytes);
@@ -122,7 +126,7 @@ public class ConsensusService {
   }
 
   private Miner buildPQOnlyMinerFromKeypair(Param param, PqKeypair pqKeypair) {
-    PQScheme scheme = Args.getLocalWitnesses().getPqScheme();
+    PQScheme scheme = pqKeypair.getScheme();
     requireSupportedPqScheme(scheme);
     byte[] privBytes = fromHexString(pqKeypair.getPrivateKey());
     byte[] pubBytes = fromHexString(pqKeypair.getPublicKey());

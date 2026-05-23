@@ -46,6 +46,15 @@ public class PQSchemeRegistryTest {
   }
 
   @Test
+  public void isSeedDeterministicMatchesSchemeProperties() {
+    // Falcon's FFT-based keygen drifts across platforms — operators must
+    // persist the expanded priv‖pub, not just the seed.
+    assertFalse(PQSchemeRegistry.isSeedDeterministic(PQScheme.FN_DSA_512));
+    // FIPS-204 keygen is pure integer arithmetic and reproducible.
+    assertTrue(PQSchemeRegistry.isSeedDeterministic(PQScheme.ML_DSA_44));
+  }
+
+  @Test
   public void getSeedLengthReturnsRegisteredValue() {
     assertEquals(FNDSA512.SEED_LENGTH,
         PQSchemeRegistry.getSeedLength(PQScheme.FN_DSA_512));
