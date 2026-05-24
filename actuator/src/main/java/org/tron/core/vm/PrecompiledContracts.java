@@ -49,6 +49,7 @@ import org.bouncycastle.asn1.x9.X9ECParameters;
 import org.bouncycastle.crypto.params.ECDomainParameters;
 import org.bouncycastle.crypto.params.ECPublicKeyParameters;
 import org.bouncycastle.crypto.signers.ECDSASigner;
+import org.bouncycastle.crypto.signers.mldsa.MLDSA44Eip8051Verifier;
 import org.bouncycastle.math.ec.ECPoint;
 import org.tron.common.crypto.Blake2bfMessageDigest;
 import org.tron.common.crypto.Hash;
@@ -126,6 +127,7 @@ public class PrecompiledContracts {
   private static final VerifyFnDsa512 verifyFnDsa512 = new VerifyFnDsa512();
   private static final BatchValidateFnDsa512 batchValidateFnDsa512 = new BatchValidateFnDsa512();
 
+  private static final VerifyMlDsa44Eip8051 verifyMlDsa44Eip8051 = new VerifyMlDsa44Eip8051();
   private static final VerifyMlDsa44 verifyMlDsa44 = new VerifyMlDsa44();
   private static final BatchValidateMlDsa44 batchValidateMlDsa44 = new BatchValidateMlDsa44();
   private static final ValidateMultiPQSig validateMultiPqSig = new ValidateMultiPQSig();
@@ -242,10 +244,13 @@ public class PrecompiledContracts {
   private static final DataWord batchValidateFnDsa512Addr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000018");
 
-  // 0x19: ML-DSA-44 single verify (FIPS 204 / CRYSTALS-Dilithium-2). TRON-style
-  // layout uses the standard 1312-byte public key encoding rho‖t1, not the
-  // EIP-8051 20512-byte expanded form — the standard encoding lets us call
-  // BC's stock MLDSASigner directly without re-implementing FIPS 204 §6.5.
+  // 0x12: EIP-8051 VERIFY_MLDSA. Uses the EIP expanded public key layout
+  // [A_hat 16384B | tr 32B | t1_ntt 4096B], not the 1312B FIPS public key.
+  private static final DataWord verifyMlDsa44Eip8051Addr = new DataWord(
+      "0000000000000000000000000000000000000000000000000000000000000012");
+
+  // 0x19: existing TRON draft address for ML-DSA-44 single verify. Kept for
+  // compatibility with contracts/tests already targeting this PR branch.
   private static final DataWord verifyMlDsa44Addr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000019");
 
@@ -370,6 +375,9 @@ public class PrecompiledContracts {
     // ML-DSA-44 (FIPS 204 / Dilithium-2): single verify and batch verify are
     // gated by their own proposal flag.
     if (VMConfig.allowMlDsa44()) {
+      if (address.equals(verifyMlDsa44Eip8051Addr)) {
+        return verifyMlDsa44Eip8051;
+      }
       if (address.equals(verifyMlDsa44Addr)) {
         return verifyMlDsa44;
       }
@@ -524,7 +532,7 @@ public class PrecompiledContracts {
     if (offset < 0 || len < 0 || offset > data.length) {
       return EMPTY_BYTE_ARRAY;
     }
-    int safe = Math.min(len, data.length - offset);
+    int safe = StrictMathWrapper.min(len, data.length - offset);
     return Arrays.copyOfRange(data, offset, offset + safe);
   }
 
@@ -600,7 +608,8 @@ public class PrecompiledContracts {
    * breaks caller expectations and must be avoided.
    *
    * <p><b>Single-verify convention</b> (e.g. {@code VerifyFnDsa512} 0x16,
-   * {@code VerifyMlDsa44} 0x19): {@code execute} always returns
+   * {@code VerifyMlDsa44Eip8051} 0x12, {@code VerifyMlDsa44} 0x19):
+   * {@code execute} always returns
    * {@code Pair.of(true, X)} where {@code X} is a 32-byte word — {@code dataOne()}
    * on cryptographic success, {@code DATA_FALSE} on any malformed input or
    * verification failure. The caller never observes an ABI/structural error;
@@ -2814,8 +2823,8 @@ public class PrecompiledContracts {
    * {@code rho ‖ t1} (1312 B) instead of EIP-8051's 20512 B expanded form
    * (precomputed {@code A_hat = ExpandA(rho)}). BC 1.84's {@code MLDSASigner}
    * only accepts the standard form; we pay the per-call {@code ExpandA}
-   * cost so 1312 B Dilithium-2 keys work unchanged. An expanded-pk variant,
-   * if added later, will get a new precompile slot — 0x19 stays as-is.
+   * cost so 1312 B Dilithium-2 keys work unchanged. The EIP-8051 expanded-pk
+   * variant is implemented separately at 0x12 — 0x19 stays as-is.
    */
   public static class VerifyMlDsa44 extends PrecompiledContract {
 
@@ -2839,6 +2848,40 @@ public class PrecompiledContracts {
         byte[] sig = copyOfRange(data, MSG_LEN, MSG_LEN + SIG_LEN);
         byte[] pk = copyOfRange(data, MSG_LEN + SIG_LEN, INPUT_LEN);
         boolean ok = MLDSA44.verify(pk, msg, sig);
+        return Pair.of(true, ok ? DataWord.ONE().getData() : DataWord.ZERO().getData());
+      } catch (Throwable t) {
+        return Pair.of(true, DataWord.ZERO().getData());
+      }
+    }
+  }
+
+  /**
+   * 0x12 EIP-8051 VERIFY_MLDSA for ML-DSA-44 expanded public keys.
+   *
+   * <p>Input layout: {@code [msg 32B | sig 2420B | expandedPk 20512B]}, where
+   * {@code expandedPk = A_hat(16384B) || tr(32B) || t1_ntt(4096B)}. Field
+   * elements inside {@code A_hat} and {@code t1_ntt} are 32-bit big-endian
+   * values and must be canonical ({@code < q}).
+   */
+  public static class VerifyMlDsa44Eip8051 extends PrecompiledContract {
+
+    @Override
+    public long getEnergyForData(byte[] data) {
+      return 4500;
+    }
+
+    @Override
+    public Pair<Boolean, byte[]> execute(byte[] data) {
+      if (data == null || data.length != MLDSA44Eip8051Verifier.INPUT_LENGTH) {
+        return Pair.of(true, DataWord.ZERO().getData());
+      }
+      try {
+        int msgLen = MLDSA44Eip8051Verifier.MESSAGE_LENGTH;
+        int sigLen = MLDSA44Eip8051Verifier.SIGNATURE_LENGTH;
+        byte[] msg = copyOfRange(data, 0, msgLen);
+        byte[] sig = copyOfRange(data, msgLen, msgLen + sigLen);
+        byte[] pk = copyOfRange(data, msgLen + sigLen, data.length);
+        boolean ok = MLDSA44Eip8051Verifier.verify(msg, sig, pk);
         return Pair.of(true, ok ? DataWord.ONE().getData() : DataWord.ZERO().getData());
       } catch (Throwable t) {
         return Pair.of(true, DataWord.ZERO().getData());

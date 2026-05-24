@@ -68,40 +68,98 @@ public class Param {
     @Setter
     private ByteString witnessAddress;
 
-    private byte[] pqPrivateKey;
-
-    private byte[] pqPublicKey;
-
     /**
-     * Post-quantum signature scheme for this miner. When unset (null), the
-     * miner signs blocks with the legacy ECDSA path using {@link #privateKey};
-     * when set (e.g. {@code FN_DSA_512}), the PQ path is used with
-     * {@link #pqPrivateKey} / {@link #pqPublicKey}.
+     * Post-quantum identity for this miner — non-null iff the miner signs
+     * blocks via the PQ path. ECDSA fields above are left null when this is
+     * set so the two miner kinds never share a slot.
      */
     @Getter
-    @Setter
-    private PQScheme pqScheme;
+    private final PQMiner pq;
 
     public Miner(byte[] privateKey, ByteString privateKeyAddress, ByteString witnessAddress) {
       this.privateKey = privateKey;
       this.privateKeyAddress = privateKeyAddress;
       this.witnessAddress = witnessAddress;
+      this.pq = null;
     }
 
-    public byte[] getPQPrivateKey() {
-      return pqPrivateKey == null ? null : pqPrivateKey.clone();
+    /**
+     * PQ-miner constructor. {@code privateKeyAddress} carries the PQ-derived
+     * address (the key-slot identity), {@code witnessAddress} carries the
+     * on-chain witness identity (often the same, but may differ in multi-sig
+     * setups). The ECDSA fields {@link #privateKey} / {@link #privateKeyAddress}
+     * / {@link #witnessAddress} are left null on purpose so ECDSA-only code
+     * paths cannot accidentally consume a PQ identity.
+     */
+    public Miner(PQScheme scheme, byte[] privateKey, byte[] publicKey,
+        ByteString privateKeyAddress, ByteString witnessAddress) {
+      this.pq = new PQMiner(scheme, privateKey, publicKey, privateKeyAddress, witnessAddress);
     }
 
-    public void setPQPrivateKey(byte[] pqPrivateKey) {
-      this.pqPrivateKey = pqPrivateKey == null ? null : pqPrivateKey.clone();
+    /** True iff this miner signs via the PQ path (i.e. has a {@link PQMiner}). */
+    public boolean isPq() {
+      return pq != null;
     }
 
-    public byte[] getPQPublicKey() {
-      return pqPublicKey == null ? null : pqPublicKey.clone();
+    /**
+     * Returns the on-chain witness address regardless of signing scheme — PQ
+     * miners route to {@link PQMiner#getWitnessAddress()}, ECDSA miners to
+     * {@link #witnessAddress}. Use this from scheme-agnostic call sites
+     * (block-producer map keys, witness-set filters, generic logging).
+     */
+    public ByteString getEffectiveWitnessAddress() {
+      return pq != null ? pq.getWitnessAddress() : witnessAddress;
     }
 
-    public void setPQPublicKey(byte[] pqPublicKey) {
-      this.pqPublicKey = pqPublicKey == null ? null : pqPublicKey.clone();
+    /**
+     * Returns the signing-key-derived address regardless of signing scheme —
+     * PQ miners route to {@link PQMiner#getPrivateKeyAddress()}, ECDSA miners to
+     * {@link #privateKeyAddress}. Use this from scheme-agnostic call sites
+     * (e.g. multi-sign permission checks).
+     */
+    public ByteString getEffectivePrivateKeyAddress() {
+      return pq != null ? pq.getPrivateKeyAddress() : privateKeyAddress;
+    }
+
+    /**
+     * Post-quantum identity bundle: scheme + key material + derived addresses.
+     * Immutable; key bytes are defensively copied on the way in and out so the
+     * stored material can't be mutated by callers.
+     */
+    public class PQMiner {
+
+      @Getter
+      private final PQScheme scheme;
+
+      private final byte[] privateKey;
+
+      private final byte[] publicKey;
+
+      /** Address derived from the PQ public key (key-slot identity). */
+      @Getter
+      private final ByteString privateKeyAddress;
+
+      /** On-chain witness identity — may differ from {@link #privateKeyAddress}
+       *  in multi-sig setups, otherwise equal to it. */
+      @Getter
+      private final ByteString witnessAddress;
+
+      public PQMiner(PQScheme scheme, byte[] privateKey, byte[] publicKey,
+          ByteString privateKeyAddress, ByteString witnessAddress) {
+        this.scheme = scheme;
+        this.privateKey = privateKey == null ? null : privateKey.clone();
+        this.publicKey = publicKey == null ? null : publicKey.clone();
+        this.privateKeyAddress = privateKeyAddress;
+        this.witnessAddress = witnessAddress;
+      }
+
+      public byte[] getPrivateKey() {
+        return privateKey == null ? null : privateKey.clone();
+      }
+
+      public byte[] getPublicKey() {
+        return publicKey == null ? null : publicKey.clone();
+      }
     }
   }
 

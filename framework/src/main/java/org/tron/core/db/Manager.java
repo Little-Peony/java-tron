@@ -1617,7 +1617,8 @@ public class Manager {
    * Generate a block.
    */
   public BlockCapsule generateBlock(Miner miner, long blockTime, long timeout) {
-    String address =  StringUtil.encode58Check(miner.getWitnessAddress().toByteArray());
+    ByteString witnessAddress = miner.getEffectiveWitnessAddress();
+    String address =  StringUtil.encode58Check(witnessAddress.toByteArray());
     final Histogram.Timer timer = Metrics.histogramStartTimer(
         MetricKeys.Histogram.BLOCK_GENERATE_LATENCY, address);
     Metrics.histogramObserve(MetricKeys.Histogram.MINER_DELAY,
@@ -1627,7 +1628,7 @@ public class Manager {
 
     BlockCapsule blockCapsule = new BlockCapsule(chainBaseManager.getHeadBlockNum() + 1,
         chainBaseManager.getHeadBlockId(),
-        blockTime, miner.getWitnessAddress());
+        blockTime, witnessAddress);
     blockCapsule.generatedByMyself = true;
     session.reset();
     session.setValue(revokingStore.buildSession());
@@ -1636,9 +1637,9 @@ public class Manager {
     accountStateCallBack.preExecute(blockCapsule);
 
     if (getDynamicPropertiesStore().getAllowMultiSign() == 1) {
-      byte[] privateKeyAddress = miner.getPrivateKeyAddress().toByteArray();
+      byte[] privateKeyAddress = miner.getEffectivePrivateKeyAddress().toByteArray();
       AccountCapsule witnessAccount = getAccountStore()
-          .get(miner.getWitnessAddress().toByteArray());
+          .get(witnessAddress.toByteArray());
       if (!Arrays.equals(privateKeyAddress, witnessAccount.getWitnessPermissionAddress())) {
         logger.warn("Witness permission is wrong.");
         return null;
@@ -1747,7 +1748,7 @@ public class Manager {
     session.reset();
 
     blockCapsule.setMerkleRoot();
-    if (miner.getPqScheme() != null) {
+    if (miner.isPq()) {
       // PQ-only miner: never fall back to ECDSA signing — miner.getPrivateKey() is
       // null on this path, and a silent fallback would NPE inside blockCapsule.sign.
       // Fail fast with a clear cause; DposTask's Throwable handler logs it and the
@@ -1755,10 +1756,11 @@ public class Manager {
       // Gate on this miner's specific scheme, not on the broader "any PQ scheme
       // allowed" flag — a Falcon-configured miner must not produce while only
       // ML-DSA is active (and vice versa).
-      if (!getDynamicPropertiesStore().isPqSchemeAllowed(miner.getPqScheme())) {
+      Param.Miner.PQMiner pq = miner.getPq();
+      if (!getDynamicPropertiesStore().isPqSchemeAllowed(pq.getScheme())) {
         throw new IllegalStateException(
-            "PQ miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
-                + " has scheme " + miner.getPqScheme()
+            "PQ miner " + Hex.toHexString(pq.getWitnessAddress().toByteArray())
+                + " has scheme " + pq.getScheme()
                 + " configured but that scheme is not allowed by dynamic properties");
       }
       signBlockCapsuleWithPQ(blockCapsule, miner);
@@ -1781,24 +1783,25 @@ public class Manager {
   }
 
   private void signBlockCapsuleWithPQ(BlockCapsule blockCapsule, Miner miner) {
-    PQScheme scheme = miner.getPqScheme();
+    Param.Miner.PQMiner pq = miner.getPq();
+    PQScheme scheme = pq.getScheme();
     if (scheme == null || !PQSchemeRegistry.contains(scheme)) {
       throw new IllegalStateException(
-          "PQ miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
-              + " has scheme " + miner.getPqScheme()
+          "PQ miner " + Hex.toHexString(pq.getWitnessAddress().toByteArray())
+              + " has scheme " + scheme
               + " which is not registered in PQSchemeRegistry");
     }
     if (!chainBaseManager.getDynamicPropertiesStore().isPqSchemeAllowed(scheme)) {
       throw new IllegalStateException(
-          "PQ miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
+          "PQ miner " + Hex.toHexString(pq.getWitnessAddress().toByteArray())
               + " has scheme " + scheme
               + " but it is not allowed by dynamic properties");
     }
-    byte[] pqPrivateKey = miner.getPQPrivateKey();
-    byte[] pqPublicKey = miner.getPQPublicKey();
+    byte[] pqPrivateKey = pq.getPrivateKey();
+    byte[] pqPublicKey = pq.getPublicKey();
     if (pqPrivateKey == null || pqPublicKey == null) {
       throw new IllegalStateException(
-          "miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
+          "miner " + Hex.toHexString(pq.getWitnessAddress().toByteArray())
               + " has scheme " + scheme
               + " set but local PQ key material is missing");
     }

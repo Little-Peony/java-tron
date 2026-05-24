@@ -93,7 +93,8 @@ public class ConsensusService {
         Miner miner = buildPQMiner(param, kp, null);
         miners.add(miner);
         logger.info("Add {} witness (from configured keypair): {}, size: {}",
-            kp.getScheme(), Hex.toHexString(miner.getWitnessAddress().toByteArray()),
+            kp.getScheme(),
+            Hex.toHexString(miner.getPq().getWitnessAddress().toByteArray()),
             miners.size());
       }
     } else if (pqKeypairs.size() == 1) {
@@ -101,7 +102,8 @@ public class ConsensusService {
           Args.getLocalWitnesses().getPqWitnessAccountAddress());
       miners.add(miner);
       logger.info("Add {} witness (from configured keypair): {}",
-          miner.getPqScheme(), Hex.toHexString(miner.getWitnessAddress().toByteArray()));
+          miner.getPq().getScheme(),
+          Hex.toHexString(miner.getPq().getWitnessAddress().toByteArray()));
     }
 
     param.setMiners(miners);
@@ -132,12 +134,9 @@ public class ConsensusService {
     if (witnessStore.get(witnessAddress) == null) {
       logger.warn("Witness {} is not in witnessStore.", Hex.toHexString(witnessAddress));
     }
-    Miner miner = param.new Miner(null,
+    return param.new Miner(scheme,
+        keypair.getPrivateKey(), keypair.getPublicKey(),
         ByteString.copyFrom(pqAddress), ByteString.copyFrom(witnessAddress));
-    miner.setPQPrivateKey(keypair.getPrivateKey());
-    miner.setPQPublicKey(keypair.getPublicKey());
-    miner.setPqScheme(scheme);
-    return miner;
   }
 
   private static void requireSupportedPqScheme(PQScheme scheme) {

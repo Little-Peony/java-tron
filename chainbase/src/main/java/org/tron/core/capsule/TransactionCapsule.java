@@ -503,7 +503,8 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     if (dynamicPropertiesStore.isAnyPqSchemeAllowed() && transaction.getPqAuthSigCount() > 0) {
       try {
         weight = StrictMathWrapper.addExact(weight,
-            validatePQSignatureGetWeight(transaction, permission, dynamicPropertiesStore, approveList));
+            validatePQSignatureGetWeight(transaction, permission, dynamicPropertiesStore,
+                approveList));
       } catch (ArithmeticException e) {
         throw new PermissionException("weight overflow");
       }
@@ -637,7 +638,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
         .signHash(getTransactionId().getBytes())));
     this.transaction = this.transaction.toBuilder().addSignature(sig).build();
   }
-  
+
   private static void checkPermission(int permissionId, Permission permission, Transaction.Contract contract) throws PermissionException {
     if (permissionId != 0) {
       if (permission.getType() != PermissionType.Active) {
@@ -810,7 +811,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
         }
       }
       isVerified = true;
-    }  
+    }
     return true;
   }
 
