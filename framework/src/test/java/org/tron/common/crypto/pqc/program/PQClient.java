@@ -45,7 +45,7 @@ import org.tron.protos.contract.BalanceContract.TransferContract;
 public class PQClient {
 
   private static final PQScheme PQ_SCHEME = PQScheme.valueOf(
-      System.getProperty("pqc.scheme", PQScheme.FN_DSA_512.name()));
+      System.getProperty("pqc.scheme", PQWitnessNode.PQ_SCHEME.name()));
   private static final String HOST =
       System.getProperty("pqc.host", "localhost");
   private static final int PORT =

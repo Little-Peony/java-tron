@@ -125,6 +125,48 @@ public class ArgsPqConfigTest {
   }
 
   @Test
+  public void mlDsa44PrivOnlyKeyDerivesPublicKey() throws IOException {
+    MLDSA44 ml = new MLDSA44(filled(MLDSA44.SEED_LENGTH, (byte) 0x0C));
+    byte[] priv = ml.getPrivateKey();
+    Path conf = writeConfWithEntry(
+        "{ scheme = \"ML_DSA_44\", key = \"" + Hex.toHexString(priv) + "\" }");
+
+    Args.setParam(new String[]{"--witness"}, conf.toString());
+
+    LocalWitnesses lw = Args.getLocalWitnesses();
+    assertEquals(1, lw.getPqKeypairs().size());
+    PqKeypair kp = lw.getPqKeypairs().get(0);
+    assertEquals(Hex.toHexString(priv), kp.getPrivateKey());
+    assertEquals(Hex.toHexString(ml.getPublicKey()), kp.getPublicKey());
+  }
+
+  @Test
+  public void mlDsa44KeyWrongLengthRejected() throws IOException {
+    String shortKey = Hex.toHexString(filled(MLDSA44.PRIVATE_KEY_LENGTH - 1, (byte) 0x0D));
+    Path conf = writeConfWithEntry(
+        "{ scheme = \"ML_DSA_44\", key = \"" + shortKey + "\" }");
+
+    TronError err = assertThrows(TronError.class,
+        () -> Args.setParam(new String[]{"--witness"}, conf.toString()));
+    assertEquals(TronError.ErrCode.WITNESS_INIT, err.getErrCode());
+    assertTrue(err.getMessage(), err.getMessage().contains("priv-only"));
+  }
+
+  @Test
+  public void fnDsa512PrivOnlyKeyRejected() throws IOException {
+    String privOnly = Hex.toHexString(filled(FNDSA512.PRIVATE_KEY_LENGTH, (byte) 0x0E));
+    Path conf = writeConfWithEntry(
+        "{ scheme = \"FN_DSA_512\", key = \"" + privOnly + "\" }");
+
+    TronError err = assertThrows(TronError.class,
+        () -> Args.setParam(new String[]{"--witness"}, conf.toString()));
+    assertEquals(TronError.ErrCode.WITNESS_INIT, err.getErrCode());
+    assertTrue(err.getMessage(),
+        err.getMessage().contains("extended priv‖pub"));
+    assertTrue(err.getMessage(), !err.getMessage().contains("priv-only"));
+  }
+
+  @Test
   public void mlDsa44KeyEntryStillAccepted() throws IOException {
     // Regression: adding the `seed` path must not break the existing `key`
     // path for the same scheme.

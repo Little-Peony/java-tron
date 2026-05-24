@@ -39,6 +39,17 @@ public final class PQSchemeRegistry {
     PQSignature fromSeed(byte[] seed);
 
     PQSignature fromKeypair(byte[] privateKey, byte[] publicKey);
+
+    /**
+     * Recover the public key from the (expanded) private key. Schemes whose
+     * BC encoding lets the verifier reconstruct {@code pk} from {@code sk}
+     * (e.g. ML-DSA-44, whose {@code rho ‖ t0} component suffices to re-derive
+     * {@code t1}) return the canonical pk bytes; schemes without such a path
+     * (e.g. Falcon-512 — see bcgit/bc-java#2297) return {@code null}.
+     */
+    default byte[] derivePublicKey(byte[] privateKey) {
+      return null;
+    }
   }
 
   /**
@@ -68,11 +79,16 @@ public final class PQSchemeRegistry {
     // across JVMs/architectures, so operators must persist the expanded
     // priv‖pub rather than a seed.
     final boolean seedDeterministic;
+    // Whether the scheme's expanded private key encoding carries enough state
+    // to recover the public key on its own. ML-DSA-44 keeps rho ‖ t0 in the
+    // sk; Falcon-512 does not (BC has no public path from (f,g) to h).
+    final boolean publicKeyRecoverable;
     final FingerprintHash hash;
     final SignatureOps ops;
 
     SchemeInfo(int privateKeyLength, int publicKeyLength, int signatureLength,
         int signatureMinLength, int seedLength, boolean seedDeterministic,
+        boolean publicKeyRecoverable,
         FingerprintHash hash, SignatureOps ops) {
       this.privateKeyLength = privateKeyLength;
       this.publicKeyLength = publicKeyLength;
@@ -80,6 +96,7 @@ public final class PQSchemeRegistry {
       this.signatureMinLength = signatureMinLength;
       this.seedLength = seedLength;
       this.seedDeterministic = seedDeterministic;
+      this.publicKeyRecoverable = publicKeyRecoverable;
       this.hash = hash;
       this.ops = ops;
     }
@@ -94,6 +111,7 @@ public final class PQSchemeRegistry {
         FNDSA512.SIGNATURE_LENGTH, FNDSA512.SIGNATURE_MIN_LENGTH,
         FNDSA512.SEED_LENGTH,
         false, // Falcon keygen is FFT-based, not bit-stable across platforms.
+        false, // BC has no public path from (f,g) to h (bcgit/bc-java#2297).
         KECCAK_256,
         new SignatureOps() {
           @Override
@@ -121,6 +139,7 @@ public final class PQSchemeRegistry {
         MLDSA44.SIGNATURE_LENGTH, MLDSA44.SIGNATURE_LENGTH, // fixed-length scheme
         MLDSA44.SEED_LENGTH,
         true, // FIPS-204 keygen is pure integer arithmetic and reproducible.
+        true, // expanded sk carries rho ‖ t0; t1 is re-derived in BC ctor.
         KECCAK_256,
         new SignatureOps() {
           @Override
@@ -141,6 +160,11 @@ public final class PQSchemeRegistry {
           @Override
           public PQSignature fromKeypair(byte[] privateKey, byte[] publicKey) {
             return new MLDSA44(privateKey, publicKey);
+          }
+
+          @Override
+          public byte[] derivePublicKey(byte[] privateKey) {
+            return MLDSA44.derivePublicKey(privateKey);
           }
         }));
     SCHEMES = Collections.unmodifiableMap(m);
@@ -244,6 +268,26 @@ public final class PQSchemeRegistry {
   public static PQSignature fromKeypair(
       PQScheme scheme, byte[] privateKey, byte[] publicKey) {
     return require(scheme).ops.fromKeypair(privateKey, publicKey);
+  }
+
+  /**
+   * Recover the public key from the expanded private key, or {@code null} when
+   * the scheme has no such recovery path (Falcon-512). Callers that need to
+   * decide format eligibility ahead of time should use
+   * {@link #canDerivePublicKey}.
+   */
+  public static byte[] derivePublicKey(PQScheme scheme, byte[] privateKey) {
+    return require(scheme).ops.derivePublicKey(privateKey);
+  }
+
+  /**
+   * Whether {@link #derivePublicKey} can recover {@code pk} from {@code sk}
+   * for this scheme. {@code true} for ML-DSA-44 (the expanded sk carries
+   * {@code rho ‖ t0}, sufficient to re-derive {@code t1}); {@code false} for
+   * Falcon-512.
+   */
+  public static boolean canDerivePublicKey(PQScheme scheme) {
+    return require(scheme).publicKeyRecoverable;
   }
 
   /**

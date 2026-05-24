@@ -1029,16 +1029,44 @@ public class Args extends CommonParameter {
       if (entry.hasKey()) {
         int privHexLen = PQSchemeRegistry.getPrivateKeyLength(scheme) * 2;
         int extHexLen = privHexLen + PQSchemeRegistry.getPublicKeyLength(scheme) * 2;
+        boolean canRecoverPk = PQSchemeRegistry.canDerivePublicKey(scheme);
         String stripped = stripHexPrefix(entry.getKey());
-        if (stripped == null || stripped.length() != extHexLen) {
+        int len = stripped == null ? 0 : stripped.length();
+        boolean shortForm = canRecoverPk && len == privHexLen;
+        if (stripped == null || (len != extHexLen && !shortForm)) {
+          String expected = canRecoverPk
+              ? String.format("%d (priv-only) or %d (extended priv‖pub)",
+                  privHexLen, extHexLen)
+              : String.format("%d (extended priv‖pub)", extHexLen);
           throw new TronError(String.format(
-              "%s[%d].key must be %d hex chars (extended priv‖pub for %s), actual: %d",
-              path, i, extHexLen, scheme,
-              stripped == null ? 0 : stripped.length()),
+              "%s[%d].key must be %s hex chars for %s, actual: %d",
+              path, i, expected, scheme, len),
               TronError.ErrCode.WITNESS_INIT);
         }
         privHex = stripped.substring(0, privHexLen);
-        pubHex = stripped.substring(privHexLen);
+        if (shortForm) {
+          byte[] privBytes;
+          try {
+            privBytes = Hex.decode(privHex);
+          } catch (RuntimeException e) {
+            throw new TronError(String.format(
+                "%s[%d].key is not valid hex for %s: %s",
+                path, i, scheme, e.getMessage()),
+                TronError.ErrCode.WITNESS_INIT);
+          }
+          byte[] pubBytes;
+          try {
+            pubBytes = PQSchemeRegistry.derivePublicKey(scheme, privBytes);
+          } catch (RuntimeException e) {
+            throw new TronError(String.format(
+                "%s[%d].key cannot recover public key for %s: %s",
+                path, i, scheme, e.getMessage()),
+                TronError.ErrCode.WITNESS_INIT);
+          }
+          pubHex = Hex.toHexString(pubBytes);
+        } else {
+          pubHex = stripped.substring(privHexLen);
+        }
       } else {
         if (!PQSchemeRegistry.isSeedDeterministic(scheme)) {
           // Falcon's FFT-based keygen drifts across JVMs/architectures, so
