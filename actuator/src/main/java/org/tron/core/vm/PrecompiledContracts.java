@@ -477,11 +477,20 @@ public class PrecompiledContracts {
     return bytes32Array;
   }
 
+  // Hard cap on the outer array element count. All callers separately enforce
+  // their own MAX_SIZE (≤ 16); this is a defense-in-depth ceiling so that a
+  // length word recovered as Integer.MAX_VALUE cannot trigger a ~17 GB
+  // byte[][] reference allocation before any per-precompile check runs.
+  static final int MAX_DYNAMIC_ARRAY = 64;
+
   private static byte[][] extractBytesArray(DataWord[] words, int offset, byte[] data) {
     if (offset > words.length - 1) {
       return new byte[0][];
     }
     int len = words[offset].intValueSafe();
+    if (len < 0 || len > MAX_DYNAMIC_ARRAY) {
+      return new byte[0][];
+    }
     byte[][] bytesArray = new byte[len][];
     for (int i = 0; i < len; i++) {
       int bytesOffset = words[offset + i + 1].intValueSafe() / WORD_SIZE;
@@ -507,7 +516,16 @@ public class PrecompiledContracts {
   }
 
   private static byte[] extractBytes(byte[] data, int offset, int len) {
-    return Arrays.copyOfRange(data, offset, offset + len);
+    // Cap the allocation by remaining calldata. Without this, a single ABI
+    // length word can request an Integer.MAX_VALUE byte[] which Arrays.copyOfRange
+    // happily zero-pads — a sub-30 k gas call could allocate ~2 GB. Callers
+    // strictly compare returned length against expected slot size, so trimming
+    // here just routes malformed calldata to the caller's normal reject path.
+    if (offset < 0 || len < 0 || offset > data.length) {
+      return EMPTY_BYTE_ARRAY;
+    }
+    int safe = Math.min(len, data.length - offset);
+    return Arrays.copyOfRange(data, offset, offset + safe);
   }
 
   private static boolean isValidAbiEncoding(byte[] data, int headerWords, int itemWords) {
@@ -2934,7 +2952,12 @@ public class PrecompiledContracts {
         int pqSigCnt = words[pqSigArrayWord].intValueSafe();
         int pqPkCnt = words[pqPkArrayWord].intValueSafe();
 
-        if (schemeCnt != pqSigCnt || schemeCnt != pqPkCnt
+        // Per-variable bounds first to defeat int overflow in the sum below
+        // (e.g. Integer.MAX_VALUE + 1 wraps to Integer.MIN_VALUE and slips past
+        // a naive `> MAX_SIZE` check).
+        if (ecdsaCnt < 0 || schemeCnt < 0
+            || ecdsaCnt > MAX_SIZE || schemeCnt > MAX_SIZE
+            || schemeCnt != pqSigCnt || schemeCnt != pqPkCnt
             || ecdsaCnt + schemeCnt == 0
             || ecdsaCnt + schemeCnt > MAX_SIZE) {
           return Pair.of(true, DATA_FALSE);
