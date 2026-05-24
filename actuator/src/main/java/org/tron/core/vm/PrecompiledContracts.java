@@ -226,8 +226,8 @@ public class PrecompiledContracts {
       "0000000000000000000000000000000000000000000000000000000000000100");
 
   // EIP-8052 0x16: FN-DSA / Falcon-512 verify (FIPS-206 draft). Input layout:
-  // [msg 32B | sig_len 2B (big-endian) | sig sig_len B (1..752) | pk 896B].
-  // Variable-length signature is prefixed with a 2-byte length field.
+  // [msg 32B | sig 666B (zero-padded slot, logical sig ends at last non-zero byte) | pk 896B].
+  // Total 1594 B. Logical sig length is recovered by trimming trailing zeros.
   private static final DataWord verifyFnDsa512Addr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000016");
 
@@ -564,8 +564,30 @@ public class PrecompiledContracts {
     return 0;
   }
 
+  /**
+   * Base class for precompiled contracts. Subclasses follow one of two
+   * return-semantics conventions; mixing them within a single precompile
+   * breaks caller expectations and must be avoided.
+   *
+   * <p><b>Single-verify convention</b> (e.g. {@code VerifyFnDsa512} 0x16,
+   * {@code VerifyMlDsa44} 0x19): {@code execute} always returns
+   * {@code Pair.of(true, X)} where {@code X} is a 32-byte word — {@code dataOne()}
+   * on cryptographic success, {@code DATA_FALSE} on any malformed input or
+   * verification failure. The caller never observes an ABI/structural error;
+   * everything is a boolean. Energy is a flat constant.
+   *
+   * <p><b>Multi-verify convention</b> (e.g. {@code BatchValidateFnDsa512} 0x18,
+   * {@code BatchValidateMlDsa44} 0x1b, {@code ValidateMultiPQSig} 0x1a):
+   * {@code execute} returns {@code Pair.of(false, EMPTY_BYTE_ARRAY)} on
+   * structural ABI errors (head too short, out-of-range offsets, length
+   * cross-check failures) so the VM aborts the call and refunds gas; and
+   * {@code Pair.of(true, DATA_FALSE)} or {@code Pair.of(true, dataOne())}
+   * for per-entry verification outcomes that the caller is expected to
+   * branch on. Energy is computed from array lengths up front.
+   */
   public abstract static class PrecompiledContract {
 
+    /** 32-byte zero word — see class Javadoc for return-semantics conventions. */
     protected static final byte[] DATA_FALSE = new byte[WORD_SIZE];
     private byte[] callerAddress;
     private Repository deposit;

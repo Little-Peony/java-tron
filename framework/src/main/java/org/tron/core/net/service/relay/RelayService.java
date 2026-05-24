@@ -134,7 +134,14 @@ public class RelayService {
             cryptoEngine.Base64toBytes(cryptoEngine.signHash(digest)));
         builder.setSignature(sig).clearPqAuthSig();
       } else {
+        // isActiveWitness() guarantees keySize > 0 || pqKeySize > 0; reaching
+        // this branch with keySize == 0 implies pqKeySize > 0. Guard anyway
+        // so a stale or mutated witness list fails loud instead of with IOOB.
         LocalWitnesses lw = Args.getLocalWitnesses();
+        if (lw.getPqKeypairs().isEmpty()) {
+          logger.warn("HelloMessage fill skipped: no PQ keypair available");
+          return;
+        }
         PqKeypair kp = lw.getPqKeypairs().get(0);
         PQScheme scheme = kp.getScheme();
         byte[] privKey = ByteArray.fromHexString(kp.getPrivateKey());

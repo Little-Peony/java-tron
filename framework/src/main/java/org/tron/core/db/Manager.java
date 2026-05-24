@@ -1752,11 +1752,14 @@ public class Manager {
       // null on this path, and a silent fallback would NPE inside blockCapsule.sign.
       // Fail fast with a clear cause; DposTask's Throwable handler logs it and the
       // witness misses this slot, but the producer thread stays alive.
-      if (!getDynamicPropertiesStore().isAnyPqSchemeAllowed()) {
+      // Gate on this miner's specific scheme, not on the broader "any PQ scheme
+      // allowed" flag — a Falcon-configured miner must not produce while only
+      // ML-DSA is active (and vice versa).
+      if (!getDynamicPropertiesStore().isPqSchemeAllowed(miner.getPqScheme())) {
         throw new IllegalStateException(
             "PQ miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
                 + " has scheme " + miner.getPqScheme()
-                + " configured but no PQ scheme is allowed by dynamic properties");
+                + " configured but that scheme is not allowed by dynamic properties");
       }
       signBlockCapsuleWithPQ(blockCapsule, miner);
     } else {

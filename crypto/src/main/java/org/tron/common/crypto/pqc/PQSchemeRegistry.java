@@ -58,6 +58,10 @@ public final class PQSchemeRegistry {
     final int privateKeyLength;
     final int publicKeyLength;
     final int signatureLength;
+    // Lower bound of the signature-length band. Equal to signatureLength for
+    // fixed-length schemes (Dilithium); strictly less for variable-length
+    // schemes (Falcon). Mirrors PQSignature#getSignatureMinLength.
+    final int signatureMinLength;
     final int seedLength;
     // Whether seed -> (priv, pub) derivation is bit-for-bit reproducible
     // across platforms. Falcon's reference keygen uses FFT and is not stable
@@ -68,10 +72,12 @@ public final class PQSchemeRegistry {
     final SignatureOps ops;
 
     SchemeInfo(int privateKeyLength, int publicKeyLength, int signatureLength,
-        int seedLength, boolean seedDeterministic, FingerprintHash hash, SignatureOps ops) {
+        int signatureMinLength, int seedLength, boolean seedDeterministic,
+        FingerprintHash hash, SignatureOps ops) {
       this.privateKeyLength = privateKeyLength;
       this.publicKeyLength = publicKeyLength;
       this.signatureLength = signatureLength;
+      this.signatureMinLength = signatureMinLength;
       this.seedLength = seedLength;
       this.seedDeterministic = seedDeterministic;
       this.hash = hash;
@@ -85,7 +91,8 @@ public final class PQSchemeRegistry {
     EnumMap<PQScheme, SchemeInfo> m = new EnumMap<>(PQScheme.class);
     m.put(PQScheme.FN_DSA_512, new SchemeInfo(
         FNDSA512.PRIVATE_KEY_LENGTH, FNDSA512.PUBLIC_KEY_LENGTH,
-        FNDSA512.SIGNATURE_LENGTH, FNDSA512.SEED_LENGTH,
+        FNDSA512.SIGNATURE_LENGTH, FNDSA512.SIGNATURE_MIN_LENGTH,
+        FNDSA512.SEED_LENGTH,
         false, // Falcon keygen is FFT-based, not bit-stable across platforms.
         KECCAK_256,
         new SignatureOps() {
@@ -111,7 +118,8 @@ public final class PQSchemeRegistry {
         }));
     m.put(PQScheme.ML_DSA_44, new SchemeInfo(
         MLDSA44.PRIVATE_KEY_LENGTH, MLDSA44.PUBLIC_KEY_LENGTH,
-        MLDSA44.SIGNATURE_LENGTH, MLDSA44.SEED_LENGTH,
+        MLDSA44.SIGNATURE_LENGTH, MLDSA44.SIGNATURE_LENGTH, // fixed-length scheme
+        MLDSA44.SEED_LENGTH,
         true, // FIPS-204 keygen is pure integer arithmetic and reproducible.
         KECCAK_256,
         new SignatureOps() {
@@ -196,17 +204,20 @@ public final class PQSchemeRegistry {
   }
 
   /**
-   * Per-scheme signature-length predicate. Fixed-length schemes require exact
-   * equality with {@link #getSignatureLength(PQScheme)}; variable-length
-   * schemes ({@code FN_DSA_512}) accept any length in
-   * [{@link FNDSA512#SIGNATURE_MIN_LENGTH}, {@link FNDSA512#SIGNATURE_LENGTH}].
+   * Per-scheme signature-length predicate. Each scheme carries its own band
+   * {@code [signatureMinLength, signatureLength]}; fixed-length schemes
+   * degenerate to the singleton {@code [max, max]}. Mirrors
+   * {@link PQSignature#validateSignature} so adding a new variable-length
+   * scheme requires no edit here.
    */
   public static boolean isValidSignatureLength(PQScheme scheme, int length) {
     SchemeInfo info = require(scheme);
-    if (scheme == PQScheme.FN_DSA_512) {
-      return length >= FNDSA512.SIGNATURE_MIN_LENGTH && length <= info.signatureLength;
-    }
-    return length == info.signatureLength;
+    return length >= info.signatureMinLength && length <= info.signatureLength;
+  }
+
+  /** Lower bound of the per-scheme signature-length band. */
+  public static int getSignatureMinLength(PQScheme scheme) {
+    return require(scheme).signatureMinLength;
   }
 
   public static byte[] sign(PQScheme scheme, byte[] privateKey, byte[] message) {

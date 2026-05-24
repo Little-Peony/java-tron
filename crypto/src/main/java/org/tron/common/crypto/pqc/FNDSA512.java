@@ -171,16 +171,6 @@ public final class FNDSA512 implements PQSignature {
   }
 
   /**
-   * FN-DSA accepts the bare {@link #PRIVATE_KEY_LENGTH} form as well as the
-   * extended {@link #PRIVATE_KEY_WITH_PUBLIC_KEY_LENGTH} form used for local
-   * witness config. Override of {@link PQSignature#validatePrivateKey}.
-   */
-  @Override
-  public void validatePrivateKey(byte[] privateKey) {
-    validatePrivateKeyBytes(privateKey);
-  }
-
-  /**
    * Returns the private key with the 896-byte public key {@code h} appended:
    * {@code f ‖ g ‖ F ‖ h} (total {@link #PRIVATE_KEY_WITH_PUBLIC_KEY_LENGTH} bytes).
    * Use this format on disk / in config when the consumer needs to recover the

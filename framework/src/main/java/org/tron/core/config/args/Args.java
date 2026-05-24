@@ -958,17 +958,17 @@ public class Args extends CommonParameter {
     LocalWitnesses pqWitnesses = null;
     if (hasPqKeys) {
       // localWitnessAccountAddress overrides the on-chain witness address for
-      // the single-witness case. In mixed mode (ECDSA + PQ) it is ambiguous,
-      // so refuse it and require each entry's address to be derived from its
-      // own key material.
+      // the single-witness case. In mixed mode (ECDSA + PQ) total witness
+      // count is ≥ 2 and per config.conf the override must be dropped; each
+      // entry derives its address from its own key material instead.
       String pqAccountAddress =
           ecdsaWitnesses == null ? lwConfig.getAccountAddress() : null;
       if (ecdsaWitnesses != null
           && StringUtils.isNotBlank(lwConfig.getAccountAddress())) {
         throw new TronError(
-            "localWitnessAccountAddress cannot be combined with both legacy and "
-                + LocalWitnessConfig.PQ_KEYS_PATH + "; remove the override or "
-                + "configure only one key source",
+            "localWitnessAccountAddress can only be set with a single witness; "
+                + "drop it when combining legacy localwitness with "
+                + LocalWitnessConfig.PQ_KEYS_PATH,
             TronError.ErrCode.WITNESS_INIT);
       }
       pqWitnesses = buildPqWitnesses(lwConfig.getPqEntries(), pqAccountAddress);
