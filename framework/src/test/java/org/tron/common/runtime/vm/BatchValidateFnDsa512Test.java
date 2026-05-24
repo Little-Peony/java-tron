@@ -77,7 +77,7 @@ public class BatchValidateFnDsa512Test {
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
       FNDSA512 k = new FNDSA512();
-      sigs.add(Hex.toHexString(k.sign(HASH)));
+      sigs.add(Hex.toHexString(padSlot(k.sign(HASH))));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
     }
@@ -96,8 +96,8 @@ public class BatchValidateFnDsa512Test {
     FNDSA512 k1 = new FNDSA512();
     FNDSA512 k2 = new FNDSA512();
     List<String> sigs = Arrays.asList(
-        Hex.toHexString(k1.sign(HASH)),
-        Hex.toHexString(k2.sign(HASH)));
+        Hex.toHexString(padSlot(k1.sign(HASH))),
+        Hex.toHexString(padSlot(k2.sign(HASH))));
     List<String> pks = Arrays.asList(
         Hex.toHexString(k1.getPublicKey()),
         Hex.toHexString(k2.getPublicKey()));
@@ -115,7 +115,7 @@ public class BatchValidateFnDsa512Test {
   public void constantCall_tamperedSignature_clearsBit() {
     contract.setConstantCall(true);
     FNDSA512 k = new FNDSA512();
-    byte[] sig = k.sign(HASH);
+    byte[] sig = padSlot(k.sign(HASH));
     sig[0] ^= 0x01;
     List<String> sigs = Collections1(Hex.toHexString(sig));
     List<String> pks = Collections1(Hex.toHexString(k.getPublicKey()));
@@ -130,7 +130,7 @@ public class BatchValidateFnDsa512Test {
     contract.setConstantCall(true);
     FNDSA512 k = new FNDSA512();
     byte[] truncatedPk = Arrays.copyOf(k.getPublicKey(), k.getPublicKey().length - 1);
-    List<String> sigs = Collections1(Hex.toHexString(k.sign(HASH)));
+    List<String> sigs = Collections1(Hex.toHexString(padSlot(k.sign(HASH))));
     List<String> pks = Collections1(Hex.toHexString(truncatedPk));
     List<String> addrs = Collections1(addrAsBytes32Hex(k.getPublicKey()));
 
@@ -148,7 +148,7 @@ public class BatchValidateFnDsa512Test {
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
       FNDSA512 k = new FNDSA512();
-      sigs.add(Hex.toHexString(k.sign(HASH)));
+      sigs.add(Hex.toHexString(padSlot(k.sign(HASH))));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
     }
@@ -162,7 +162,7 @@ public class BatchValidateFnDsa512Test {
   public void mismatchedArrayLengths_returnsZero() {
     contract.setConstantCall(true);
     FNDSA512 k = new FNDSA512();
-    List<String> sigs = Collections1(Hex.toHexString(k.sign(HASH)));
+    List<String> sigs = Collections1(Hex.toHexString(padSlot(k.sign(HASH))));
     List<String> pks = Arrays.asList(
         Hex.toHexString(k.getPublicKey()), Hex.toHexString(k.getPublicKey()));
     List<String> addrs = Collections1(addrAsBytes32Hex(k.getPublicKey()));
@@ -181,7 +181,7 @@ public class BatchValidateFnDsa512Test {
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
       FNDSA512 k = new FNDSA512();
-      sigs.add(Hex.toHexString(k.sign(HASH)));
+      sigs.add(Hex.toHexString(padSlot(k.sign(HASH))));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
     }
@@ -198,7 +198,7 @@ public class BatchValidateFnDsa512Test {
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
       FNDSA512 k = new FNDSA512();
-      sigs.add(Hex.toHexString(k.sign(HASH)));
+      sigs.add(Hex.toHexString(padSlot(k.sign(HASH))));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
     }
@@ -223,7 +223,7 @@ public class BatchValidateFnDsa512Test {
     for (int i = 0; i < n; i++) {
       FNDSA512 k = new FNDSA512();
       // Sign HASH...
-      sigs.add(Hex.toHexString(k.sign(HASH)));
+      sigs.add(Hex.toHexString(padSlot(k.sign(HASH))));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
     }
@@ -244,7 +244,7 @@ public class BatchValidateFnDsa512Test {
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
       FNDSA512 k = new FNDSA512();
-      sigs.add(Hex.toHexString(k.sign(HASH)));
+      sigs.add(Hex.toHexString(padSlot(k.sign(HASH))));
       pks.add(Hex.toHexString(k.getPublicKey()));
       addrs.add(addrAsBytes32Hex(k.getPublicKey()));
     }
@@ -268,7 +268,7 @@ public class BatchValidateFnDsa512Test {
     List<String> addrs = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
       FNDSA512 k = new FNDSA512();
-      byte[] sig = k.sign(HASH);
+      byte[] sig = padSlot(k.sign(HASH));
       // Tamper entries 1 and 3.
       if (i == 1 || i == 3) {
         sig[0] ^= 0x01;
@@ -298,7 +298,47 @@ public class BatchValidateFnDsa512Test {
     Assert.assertEquals(0, res[0]);
   }
 
+  @Test
+  public void slotShorterThan666_clearsBit() {
+    contract.setConstantCall(true);
+    FNDSA512 k = new FNDSA512();
+    byte[] sig = k.sign(HASH);
+    byte[] shortSlot = Arrays.copyOf(sig, FNDSA512.SIGNATURE_LENGTH - 1);
+    List<String> sigs = Collections1(Hex.toHexString(shortSlot));
+    List<String> pks = Collections1(Hex.toHexString(k.getPublicKey()));
+    List<String> addrs = Collections1(addrAsBytes32Hex(k.getPublicKey()));
+
+    byte[] res = run(HASH, sigs, pks, addrs).getRight();
+    Assert.assertEquals(0, res[0]);
+  }
+
+  @Test
+  public void allZeroSlot_clearsBit() {
+    contract.setConstantCall(true);
+    FNDSA512 k = new FNDSA512();
+    byte[] zeroSlot = new byte[FNDSA512.SIGNATURE_LENGTH];
+    List<String> sigs = Collections1(Hex.toHexString(zeroSlot));
+    List<String> pks = Collections1(Hex.toHexString(k.getPublicKey()));
+    List<String> addrs = Collections1(addrAsBytes32Hex(k.getPublicKey()));
+
+    byte[] res = run(HASH, sigs, pks, addrs).getRight();
+    Assert.assertEquals(0, res[0]);
+  }
+
   // -------- helpers --------
+
+  /**
+   * Pin a canonical Falcon-512 signature into the precompile's fixed 666-byte slot.
+   * BC's variable-length encoding is preserved at the head; the tail is zero-padded.
+   * Mirrors the EIP-8052 slot convention enforced by 0x16 / 0x1a / 0x18.
+   */
+  private static byte[] padSlot(byte[] sig) {
+    if (sig.length > FNDSA512.SIGNATURE_LENGTH) {
+      throw new IllegalStateException("Falcon sig longer than slot: " + sig.length);
+    }
+    return Arrays.copyOf(sig, FNDSA512.SIGNATURE_LENGTH);
+  }
+
 
   private Pair<Boolean, byte[]> run(byte[] hash, List<String> sigs,
                                     List<String> pks, List<String> addrs) {

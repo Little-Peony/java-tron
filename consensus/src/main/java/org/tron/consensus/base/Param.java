@@ -54,14 +54,6 @@ public class Param {
     return param;
   }
 
-  /** Signing key family carried by a {@link Miner}. */
-  public enum MinerType {
-    /** Legacy ECDSA / SM2 witness; signs blocks via {@code BlockCapsule.sign}. */
-    ECDSA,
-    /** Post-quantum witness; signs blocks via {@code signWitnessAuth}. */
-    PQ
-  }
-
   public class Miner {
 
     @Getter

@@ -1747,8 +1747,17 @@ public class Manager {
     session.reset();
 
     blockCapsule.setMerkleRoot();
-    if (getDynamicPropertiesStore().isAnyPqSchemeAllowed()
-        && miner.getPqScheme() != null) {
+    if (miner.getPqScheme() != null) {
+      // PQ-only miner: never fall back to ECDSA signing — miner.getPrivateKey() is
+      // null on this path, and a silent fallback would NPE inside blockCapsule.sign.
+      // Fail fast with a clear cause; DposTask's Throwable handler logs it and the
+      // witness misses this slot, but the producer thread stays alive.
+      if (!getDynamicPropertiesStore().isAnyPqSchemeAllowed()) {
+        throw new IllegalStateException(
+            "PQ miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
+                + " has scheme " + miner.getPqScheme()
+                + " configured but no PQ scheme is allowed by dynamic properties");
+      }
       signBlockCapsuleWithPQ(blockCapsule, miner);
     } else {
       blockCapsule.sign(miner.getPrivateKey());
@@ -1772,19 +1781,16 @@ public class Manager {
     PQScheme scheme = miner.getPqScheme();
     if (scheme == null || !PQSchemeRegistry.contains(scheme)) {
       throw new IllegalStateException(
-          "PQ-only miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
+          "PQ miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
               + " has scheme " + miner.getPqScheme()
-              + " configured but it is not currently usable "
-              + "or witness permission is missing/empty)");
+              + " which is not registered in PQSchemeRegistry");
     }
     if (!chainBaseManager.getDynamicPropertiesStore().isPqSchemeAllowed(scheme)) {
       throw new IllegalStateException(
-          "PQ-only miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
-              + " has scheme " + miner.getPqScheme()
+          "PQ miner " + Hex.toHexString(miner.getWitnessAddress().toByteArray())
+              + " has scheme " + scheme
               + " but it is not allowed by dynamic properties");
     }
-
-
     byte[] pqPrivateKey = miner.getPQPrivateKey();
     byte[] pqPublicKey = miner.getPQPublicKey();
     if (pqPrivateKey == null || pqPublicKey == null) {

@@ -17,17 +17,13 @@ enum AccountType {
 }
 
 // Post-quantum signature scheme identifier used by PQAuthSig.
-// UNKNOWN_PQ_SCHEME = 0 is the proto3 default and is reserved per the
-// java-tron API evolution standard (issue #6515) so unset / unrecognized
-// values are detectable by JSON consumers; it MUST never be registered
-// in PQSchemeRegistry. FN_DSA_512 = 1 is the V2 launch scheme;
-// ML_DSA_44 = 2 (FIPS 204 / CRYSTALS-Dilithium-2) is the second scheme.
-// New schemes are reserved for future activation (see PQSchemeRegistry).
+// 0 = proto3 default, never registered.
+// Values 3..15 are unassigned; allocation requires a TIP + governance proposal.
+// proto3 `reserved` is deliberately not used here — it would block future allocation.
 enum PQScheme {
   UNKNOWN_PQ_SCHEME = 0;
   FN_DSA_512 = 1;
   ML_DSA_44 = 2;
-  reserved 3 to 15;
 }
 
 // AccountId, (name, address) use name, (null, address) use address, (name, null) use name,

@@ -93,29 +93,18 @@ public class ConsensusService {
 
     if (pqKeypairs.size() > 1) {
       for (PqKeypair kp : pqKeypairs) {
-        PQScheme scheme = kp.getScheme();
-        requireSupportedPqScheme(scheme);
-        byte[] privBytes = fromHexString(kp.getPrivateKey());
-        byte[] pubBytes = fromHexString(kp.getPublicKey());
-        PQSignature keypair = PQSchemeRegistry.fromKeypair(scheme, privBytes, pubBytes);
-        byte[] sk = keypair.getPrivateKey();
-        byte[] pk = keypair.getPublicKey();
-        byte[] pqAddress = keypair.getAddress();
-        WitnessCapsule witnessCapsule = witnessStore.get(pqAddress);
-        if (null == witnessCapsule) {
-          logger.warn("Witness {} is not in witnessStore.", Hex.toHexString(pqAddress));
-        }
-        ByteString pqAddressBs = ByteString.copyFrom(pqAddress);
-        Miner miner = param.new Miner(null, pqAddressBs, pqAddressBs);
-        miner.setPQPrivateKey(sk);
-        miner.setPQPublicKey(pk);
-        miner.setPqScheme(scheme);
+        Miner miner = buildPQMiner(param, kp, null);
         miners.add(miner);
         logger.info("Add {} witness (from configured keypair): {}, size: {}",
-            scheme, Hex.toHexString(pqAddress), miners.size());
+            kp.getScheme(), Hex.toHexString(miner.getWitnessAddress().toByteArray()),
+            miners.size());
       }
     } else if (pqKeypairs.size() == 1) {
-      miners.add(buildPQOnlyMinerFromKeypair(param, pqKeypairs.get(0)));
+      Miner miner = buildPQMiner(param, pqKeypairs.get(0),
+          Args.getLocalWitnesses().getWitnessAccountAddress());
+      miners.add(miner);
+      logger.info("Add {} witness (from configured keypair): {}",
+          miner.getPqScheme(), Hex.toHexString(miner.getWitnessAddress().toByteArray()));
     }
 
     param.setMiners(miners);
@@ -125,31 +114,32 @@ public class ConsensusService {
     logger.info("consensus service start success");
   }
 
-  private Miner buildPQOnlyMinerFromKeypair(Param param, PqKeypair pqKeypair) {
+  /**
+   * Builds a PQ-only miner from a configured keypair. When {@code witnessAddressOverride}
+   * is non-empty (single-witness mode), the override is used as the witness account
+   * address while the PQ-derived address fills the key-address slot — letting multi-sig
+   * permission setups route signing through a witness account distinct from the key.
+   * In multi-witness mode the override does not apply (a single config value cannot
+   * address N witnesses), so callers pass {@code null} and the PQ-derived address
+   * fills both slots.
+   */
+  private Miner buildPQMiner(Param param, PqKeypair pqKeypair, byte[] witnessAddressOverride) {
     PQScheme scheme = pqKeypair.getScheme();
     requireSupportedPqScheme(scheme);
-    byte[] privBytes = fromHexString(pqKeypair.getPrivateKey());
-    byte[] pubBytes = fromHexString(pqKeypair.getPublicKey());
-    PQSignature keypair = PQSchemeRegistry.fromKeypair(scheme, privBytes, pubBytes);
-    byte[] sk = keypair.getPrivateKey();
-    byte[] pk = keypair.getPublicKey();
+    PQSignature keypair = PQSchemeRegistry.fromKeypair(scheme,
+        fromHexString(pqKeypair.getPrivateKey()), fromHexString(pqKeypair.getPublicKey()));
     byte[] pqAddress = keypair.getAddress();
-    byte[] witnessAddress = Args.getLocalWitnesses().getWitnessAccountAddress();
-    if (witnessAddress == null || witnessAddress.length == 0) {
-      witnessAddress = pqAddress;
-    }
-    WitnessCapsule witnessCapsule = witnessStore.get(witnessAddress);
-    if (null == witnessCapsule) {
+    byte[] witnessAddress =
+        (witnessAddressOverride != null && witnessAddressOverride.length > 0)
+            ? witnessAddressOverride : pqAddress;
+    if (witnessStore.get(witnessAddress) == null) {
       logger.warn("Witness {} is not in witnessStore.", Hex.toHexString(witnessAddress));
     }
-    // In multi-signature mode, the address derived from the PQ key may differ from witnessAddress.
-    Miner miner = param.new Miner(null, ByteString.copyFrom(pqAddress),
-        ByteString.copyFrom(witnessAddress));
-    miner.setPQPrivateKey(sk);
-    miner.setPQPublicKey(pk);
+    Miner miner = param.new Miner(null,
+        ByteString.copyFrom(pqAddress), ByteString.copyFrom(witnessAddress));
+    miner.setPQPrivateKey(keypair.getPrivateKey());
+    miner.setPQPublicKey(keypair.getPublicKey());
     miner.setPqScheme(scheme);
-    logger.info("Add {} witness (from configured keypair): {}",
-        scheme, Hex.toHexString(witnessAddress));
     return miner;
   }
 

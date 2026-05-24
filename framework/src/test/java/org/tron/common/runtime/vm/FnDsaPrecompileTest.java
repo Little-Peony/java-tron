@@ -12,12 +12,16 @@ import org.tron.core.vm.config.VMConfig;
 
 /**
  * Unit tests for the FN-DSA / Falcon-512 (0x16) verify precompile (EIP-8052 / TRON extension).
- * Input layout: [msg 32B | sig_len 2B | sig sig_len B | pk 896B]. Stateless — no chain DB.
+ * Input layout (fixed-length): [msg 32B | sig 666B (zero-padded) | pk 896B] = 1594B total.
+ * Stateless — no chain DB.
  */
 public class FnDsaPrecompileTest {
 
   private static final DataWord FNDSA_ADDR = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000016");
+
+  private static final int INPUT_LEN =
+      32 + FNDSA512.SIGNATURE_LENGTH + FNDSA512.PUBLIC_KEY_LENGTH;
 
   private static final byte[] MESSAGE_HASH = new byte[32];
 
@@ -117,56 +121,7 @@ public class FnDsaPrecompileTest {
   @Test
   public void shortInput_returnsZero() {
     Pair<Boolean, byte[]> result =
-        PrecompiledContracts.getContractForAddress(FNDSA_ADDR).execute(new byte[100]);
-
-    Assert.assertTrue(result.getLeft());
-    Assert.assertArrayEquals(DataWord.ZERO().getData(), result.getRight());
-  }
-
-  @Test
-  public void zeroSigLen_returnsZero() {
-    FNDSA512 key = new FNDSA512();
-    byte[] pk = key.getPublicKey();
-    // sig_len = 0 is invalid (must be >= 1)
-    // input must be >= MIN_INPUT_LEN (931 = 32 + 2 + 1 + 896) to reach the sigLen check
-    byte[] input = new byte[32 + 2 + pk.length + 1];
-    System.arraycopy(MESSAGE_HASH, 0, input, 0, 32);
-    // sig_len bytes = 0x00 0x00 → sigLen = 0
-    System.arraycopy(pk, 0, input, 34, pk.length);
-
-    Pair<Boolean, byte[]> result =
-        PrecompiledContracts.getContractForAddress(FNDSA_ADDR).execute(input);
-
-    Assert.assertTrue(result.getLeft());
-    Assert.assertArrayEquals(DataWord.ZERO().getData(), result.getRight());
-  }
-
-  @Test
-  public void oversizedSigLen_returnsZero() {
-    // sig_len = 753, which exceeds FNDSA512.SIGNATURE_LENGTH (752)
-    byte[] input = new byte[32 + 2 + 753 + FNDSA512.PUBLIC_KEY_LENGTH];
-    input[32] = 0x02;   // high byte
-    input[33] = (byte) 0xF1; // low byte → 0x02F1 = 753
-    Pair<Boolean, byte[]> result =
-        PrecompiledContracts.getContractForAddress(FNDSA_ADDR).execute(input);
-
-    Assert.assertTrue(result.getLeft());
-    Assert.assertArrayEquals(DataWord.ZERO().getData(), result.getRight());
-  }
-
-  @Test
-  public void sigLenLargerThanActualData_returnsZero() {
-    FNDSA512 key = new FNDSA512();
-    byte[] sig = key.sign(MESSAGE_HASH);
-    // claim sig is 100 bytes longer than it is
-    byte[] input = buildInput(MESSAGE_HASH, sig, key.getPublicKey());
-    // corrupt sig_len field to claim a larger sig
-    int claimedLen = sig.length + 100;
-    input[32] = (byte) ((claimedLen >> 8) & 0xFF);
-    input[33] = (byte) (claimedLen & 0xFF);
-
-    Pair<Boolean, byte[]> result =
-        PrecompiledContracts.getContractForAddress(FNDSA_ADDR).execute(input);
+        PrecompiledContracts.getContractForAddress(FNDSA_ADDR).execute(new byte[INPUT_LEN - 1]);
 
     Assert.assertTrue(result.getLeft());
     Assert.assertArrayEquals(DataWord.ZERO().getData(), result.getRight());
@@ -189,15 +144,51 @@ public class FnDsaPrecompileTest {
     Assert.assertArrayEquals(DataWord.ZERO().getData(), result.getRight());
   }
 
-  /** Encodes input as [msg 32B | sig_len 2B | sig | pk]. */
+  @Test
+  public void emptySigSlot_returnsZero() {
+    // All-zero sig slot → recovered length 0 → below SIGNATURE_MIN_LENGTH (41).
+    FNDSA512 key = new FNDSA512();
+    byte[] input = new byte[INPUT_LEN];
+    System.arraycopy(MESSAGE_HASH, 0, input, 0, 32);
+    System.arraycopy(key.getPublicKey(), 0, input,
+        32 + FNDSA512.SIGNATURE_LENGTH, FNDSA512.PUBLIC_KEY_LENGTH);
+
+    Pair<Boolean, byte[]> result =
+        PrecompiledContracts.getContractForAddress(FNDSA_ADDR).execute(input);
+
+    Assert.assertTrue(result.getLeft());
+    Assert.assertArrayEquals(DataWord.ZERO().getData(), result.getRight());
+  }
+
+  @Test
+  public void sigSlotShorterThanMin_returnsZero() {
+    // Recovered logical length 32 (last non-zero at offset 31 of sig slot) is below
+    // SIGNATURE_MIN_LENGTH (41) — too short to contain header + nonce.
+    FNDSA512 key = new FNDSA512();
+    byte[] input = new byte[INPUT_LEN];
+    System.arraycopy(MESSAGE_HASH, 0, input, 0, 32);
+    input[32 + 31] = (byte) 0xFF;
+    System.arraycopy(key.getPublicKey(), 0, input,
+        32 + FNDSA512.SIGNATURE_LENGTH, FNDSA512.PUBLIC_KEY_LENGTH);
+
+    Pair<Boolean, byte[]> result =
+        PrecompiledContracts.getContractForAddress(FNDSA_ADDR).execute(input);
+
+    Assert.assertTrue(result.getLeft());
+    Assert.assertArrayEquals(DataWord.ZERO().getData(), result.getRight());
+  }
+
+  /**
+   * Encodes input as [msg 32B | sig 666B (zero-padded) | pk 896B]. The caller's
+   * {@code sig} must satisfy {@code FNDSA512.SIGNATURE_MIN_LENGTH <= sig.length
+   * <= FNDSA512.SIGNATURE_LENGTH}; bytes beyond {@code sig.length} are zero-padded
+   * to fill the 666-byte slot.
+   */
   private static byte[] buildInput(byte[] msg, byte[] sig, byte[] pk) {
-    int sigLen = sig.length;
-    byte[] out = new byte[32 + 2 + sigLen + pk.length];
+    byte[] out = new byte[INPUT_LEN];
     System.arraycopy(msg, 0, out, 0, 32);
-    out[32] = (byte) ((sigLen >> 8) & 0xFF);
-    out[33] = (byte) (sigLen & 0xFF);
-    System.arraycopy(sig, 0, out, 34, sigLen);
-    System.arraycopy(pk, 0, out, 34 + sigLen, pk.length);
+    System.arraycopy(sig, 0, out, 32, sig.length);
+    System.arraycopy(pk, 0, out, 32 + FNDSA512.SIGNATURE_LENGTH, pk.length);
     return out;
   }
 }

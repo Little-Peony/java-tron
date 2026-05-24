@@ -27,8 +27,10 @@ import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -122,13 +124,11 @@ public class PrecompiledContracts {
   private static final P256Verify p256Verify = new P256Verify();
 
   private static final VerifyFnDsa512 verifyFnDsa512 = new VerifyFnDsa512();
-  private static final ValidateMultiFnDsa512 validateMultiFnDsa512 =
-      new ValidateMultiFnDsa512();
   private static final BatchValidateFnDsa512 batchValidateFnDsa512 = new BatchValidateFnDsa512();
 
   private static final VerifyMlDsa44 verifyMlDsa44 = new VerifyMlDsa44();
-  private static final ValidateMultiMlDsa44 validateMultiMlDsa44 = new ValidateMultiMlDsa44();
   private static final BatchValidateMlDsa44 batchValidateMlDsa44 = new BatchValidateMlDsa44();
+  private static final ValidateMultiPQSig validateMultiPqSig = new ValidateMultiPQSig();
 
   // FreezeV2 PrecompileContracts
   private static final GetChainParameter getChainParameter = new GetChainParameter();
@@ -231,11 +231,10 @@ public class PrecompiledContracts {
   private static final DataWord verifyFnDsa512Addr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000016");
 
-  // 0x17: algorithm-agnostic Permission multi-sign — accepts both ECDSA and
-  // Falcon-512 signatures against the same Permission.keys[] in one call,
-  // matching transaction-side §2.3.5 mixed-weight semantics.
-  private static final DataWord validateMultiFnDsa512Addr = new DataWord(
-      "0000000000000000000000000000000000000000000000000000000000000017");
+  // 0x17 is intentionally unallocated. An earlier draft used it for a
+  // Falcon-only multi-sign precompile; that contract was merged into the
+  // algorithm-agnostic 0x1a ValidateMultiPQSig before either slot was
+  // activated. Re-allocating 0x17 requires a new TIP.
 
   // 0x18: batch independent Falcon-512 verify — bitmap of (sig, pk, addr)
   // matches; mixed-algorithm contracts call 0x0A and 0x18 separately and OR
@@ -245,14 +244,17 @@ public class PrecompiledContracts {
 
   // 0x19: ML-DSA-44 single verify (FIPS 204 / CRYSTALS-Dilithium-2). TRON-style
   // layout uses the standard 1312-byte public key encoding rho‖t1, not the
-  // EIP-8051 22964-byte expanded form — the standard encoding lets us call
+  // EIP-8051 20512-byte expanded form — the standard encoding lets us call
   // BC's stock MLDSASigner directly without re-implementing FIPS 204 §6.5.
   private static final DataWord verifyMlDsa44Addr = new DataWord(
       "0000000000000000000000000000000000000000000000000000000000000019");
 
-  // 0x1a: algorithm-agnostic Permission multi-sign with ML-DSA-44, mirroring
-  // 0x17's mixed ECDSA + PQ semantics for Dilithium signatures.
-  private static final DataWord validateMultiMlDsa44Addr = new DataWord(
+  // 0x1a: algorithm-agnostic Permission multi-sign — accepts ECDSA and any
+  // registered PQ scheme (Falcon-512, ML-DSA-44, ...) against the same
+  // Permission.keys[] in one call, dispatched by an explicit per-entry scheme
+  // tag. Replaces the earlier Falcon-only 0x17 and Dilithium-only draft, which
+  // were never activated.
+  private static final DataWord validateMultiPqSigAddr = new DataWord(
       "000000000000000000000000000000000000000000000000000000000000001a");
 
   // 0x1b: batch independent ML-DSA-44 verify — bitmap output, same shape as 0x18.
@@ -344,28 +346,32 @@ public class PrecompiledContracts {
       return p256Verify;
     }
 
-    // FN-DSA-512 is the first PQ signature scheme supported by TRON, so its proposal flag
-    // gates every PQ-related precompile (single verify, multisig verify, batch verify).
+    // 0x1a ValidateMultiPQSig is algorithm-agnostic and dispatches per entry,
+    // so it is available whenever ANY registered PQ scheme is active. Per-entry
+    // runtime checks inside the precompile still reject scheme tags whose
+    // proposal hasn't passed.
+    if (VMConfig.allowFnDsa512() || VMConfig.allowMlDsa44()) {
+      if (address.equals(validateMultiPqSigAddr)) {
+        return validateMultiPqSig;
+      }
+    }
+
+    // FN-DSA-512 (Falcon): single verify and batch verify are gated by their
+    // own proposal flag.
     if (VMConfig.allowFnDsa512()) {
       if (address.equals(verifyFnDsa512Addr)) {
         return verifyFnDsa512;
-      }
-      if (address.equals(validateMultiFnDsa512Addr)) {
-        return validateMultiFnDsa512;
       }
       if (address.equals(batchValidateFnDsa512Addr)) {
         return batchValidateFnDsa512;
       }
     }
 
-    // ML-DSA-44 (FIPS 204 / Dilithium-2): second registered PQ scheme; gated by
-    // its own proposal flag so it can be activated independently of FN-DSA-512.
+    // ML-DSA-44 (FIPS 204 / Dilithium-2): single verify and batch verify are
+    // gated by their own proposal flag.
     if (VMConfig.allowMlDsa44()) {
       if (address.equals(verifyMlDsa44Addr)) {
         return verifyMlDsa44;
-      }
-      if (address.equals(validateMultiMlDsa44Addr)) {
-        return validateMultiMlDsa44;
       }
       if (address.equals(batchValidateMlDsa44Addr)) {
         return batchValidateMlDsa44;
@@ -539,6 +545,23 @@ public class PrecompiledContracts {
     }
     long lengthWordIdx = offsetBytes / WORD_SIZE;
     return lengthWordIdx < words.length;
+  }
+
+  /**
+   * Returns the logical Falcon-512 signature length packed at the start of a
+   * fixed slot {@code data[from..to)}: the offset of the last non-zero byte
+   * (exclusive). Canonical Falcon encodings always end in a non-zero byte
+   * ({@code compressed_s2}'s unary terminator), so anything beyond is zero
+   * padding. Returns 0 if the slot is all zero. Shared by 0x16, 0x18, and 0x1a
+   * because every precompile slot for Falcon sigs is the same 666-byte slot.
+   */
+  static int recoverFalconSigLen(byte[] data, int from, int to) {
+    for (int i = to - 1; i >= from; i--) {
+      if (data[i] != 0) {
+        return i - from + 1;
+      }
+    }
+    return 0;
   }
 
   public abstract static class PrecompiledContract {
@@ -2487,23 +2510,31 @@ public class PrecompiledContracts {
   /**
    * Verifies a FN-DSA / Falcon-512 signature (FIPS-206 draft). EIP-8052 / TRON extension.
    *
-   * <p>Input layout (variable-length, EIP-8052-inspired):
+   * <p>Input layout (fixed-length, EIP-8052):
    * <pre>
-   *   [msg 32B | sig_len 2B (big-endian, 1..752) | sig sig_len B | pk 896B]
+   *   [msg 32B | sig 666B (zero-padded) | pk 896B]  total = 1594B
    * </pre>
-   * Total length must equal exactly {@code 32 + 2 + sig_len + 896} (no trailing
-   * bytes; matches 0x100 P256Verify / EIP-7951 strictness).
+   * Falcon-512 signatures are logically variable in
+   * [{@code FNDSA512.SIGNATURE_MIN_LENGTH}, {@code FNDSA512.SIGNATURE_LENGTH}] =
+   * [41, 666]; the precompile slot fixes a 666-byte window. Encoders write the
+   * canonical signature into the prefix of the slot and zero-pad the tail to
+   * length 666. The canonical Falcon encoding always ends in a non-zero byte
+   * (the {@code compressed_s2} unary terminator bit), so the logical length is
+   * recovered by scanning the slot backwards for the first non-zero byte. Total
+   * input length must equal exactly 1594 (no trailing bytes; matches 0x100
+   * P256Verify / EIP-7951 strictness).
    *
-   * <p>Returns a 32-byte word: 1 on valid signature, 0 otherwise.
-   * Malformed input (wrong lengths, out-of-range sig_len) returns 0 without error.
+   * <p>Returns a 32-byte word: 1 on valid signature, 0 otherwise. Malformed
+   * input (wrong total length, sig slot all zero, recovered length out of
+   * range, BC verification failure) returns 0 without error.
    */
   public static class VerifyFnDsa512 extends PrecompiledContract {
 
     private static final int MSG_LEN = 32;
-    private static final int SIG_LEN_FIELD = 2;
+    private static final int SIG_SLOT_LEN = FNDSA512.SIGNATURE_LENGTH;
+    private static final int SIG_MIN_LEN = FNDSA512.SIGNATURE_MIN_LENGTH;
     private static final int PK_LEN = FNDSA512.PUBLIC_KEY_LENGTH;
-    private static final int MAX_SIG_LEN = FNDSA512.SIGNATURE_LENGTH;
-    private static final int MIN_INPUT_LEN = MSG_LEN + SIG_LEN_FIELD + 1 + PK_LEN;
+    private static final int INPUT_LEN = MSG_LEN + SIG_SLOT_LEN + PK_LEN;
 
     @Override
     public long getEnergyForData(byte[] data) {
@@ -2512,187 +2543,28 @@ public class PrecompiledContracts {
 
     @Override
     public Pair<Boolean, byte[]> execute(byte[] data) {
-      if (data == null || data.length < MIN_INPUT_LEN) {
+      if (data == null || data.length != INPUT_LEN) {
         return Pair.of(true, DataWord.ZERO().getData());
       }
       try {
         byte[] msg = copyOfRange(data, 0, MSG_LEN);
-        int sigLen = ((data[MSG_LEN] & 0xFF) << 8) | (data[MSG_LEN + 1] & 0xFF);
-        if (sigLen < 1 || sigLen > MAX_SIG_LEN) {
+        int sigStart = MSG_LEN;
+        int sigEnd = MSG_LEN + SIG_SLOT_LEN;
+        int sigLen = recoverFalconSigLen(data, sigStart, sigEnd);
+        if (sigLen < SIG_MIN_LEN || sigLen > SIG_SLOT_LEN) {
           return Pair.of(true, DataWord.ZERO().getData());
         }
-        int pkOffset = MSG_LEN + SIG_LEN_FIELD + sigLen;
-        // Strict equality (cf. 0x100 P256Verify): one logical input ↔ one encoding,
-        // leaves room for future EIP-8052 trailing fields.
-        if (data.length != pkOffset + PK_LEN) {
-          return Pair.of(true, DataWord.ZERO().getData());
-        }
-        byte[] sig = copyOfRange(data, MSG_LEN + SIG_LEN_FIELD, pkOffset);
-        byte[] pk = copyOfRange(data, pkOffset, pkOffset + PK_LEN);
+        byte[] sig = copyOfRange(data, sigStart, sigStart + sigLen);
+        byte[] pk = copyOfRange(data, sigEnd, INPUT_LEN);
         boolean ok = FNDSA512.verify(pk, msg, sig);
         return Pair.of(true, ok ? DataWord.ONE().getData() : DataWord.ZERO().getData());
       } catch (Throwable t) {
         return Pair.of(true, DataWord.ZERO().getData());
       }
     }
+
   }
 
-
-  /**
-   * 0x17 ValidateMultiSign — algorithm-agnostic Permission multi-sign.
-   * <p>Mirrors 0x09 hash construction ({@code SHA-256(address ‖ permissionId(int4B) ‖ data)})
-   * and threshold/dedup semantics, while accepting Falcon-512 entries alongside ECDSA
-   * against the same {@code Permission.keys[]}. The {@code data} field stays {@code bytes32}
-   * so the hash is bit-identical to 0x09.
-   *
-   * <p>ABI:
-   * <pre>
-   *   validateMultiSign(
-   *       address account,           // word[0]
-   *       uint256 permissionId,      // word[1]
-   *       bytes32 data,              // word[2]
-   *       bytes[] ecdsaSignatures,   // word[3] = offset; each entry 65 B
-   *       bytes[] pqSignatures,      // word[4] = offset; each entry 1..752 B
-   *       bytes[] pqPublicKeys       // word[5] = offset; each entry 896 B
-   *   ) returns (bool)
-   * </pre>
-   *
-   * <p>{@code MAX_SIZE = 5} applies to the total signature count
-   * ({@code ecdsaCnt + pqCnt}). Energy is split: {@code ecdsaCnt × 1500 + pqCnt × 2000}.
-   */
-  public static class ValidateMultiFnDsa512 extends PrecompiledContract {
-
-    private static final int ECDSA_ENERGY_PER_SIGN = 1500;
-    private static final int PQ_ENERGY_PER_SIGN = 2000;
-    private static final int MAX_SIZE = 5;
-    private static final int PK_LEN = FNDSA512.PUBLIC_KEY_LENGTH;
-    private static final int MAX_SIG_LEN = FNDSA512.SIGNATURE_LENGTH;
-    // address, permissionId, data, ecdsaOffset, pqSigOffset, pqPkOffset.
-    private static final int ABI_HEAD_WORDS = 6;
-
-    @Override
-    public long getEnergyForData(byte[] data) {
-      try {
-        DataWord[] words = DataWord.parseArray(data);
-        int ecdsaCnt = words[words[3].intValueSafe() / WORD_SIZE].intValueSafe();
-        int pqCnt = words[words[4].intValueSafe() / WORD_SIZE].intValueSafe();
-        return (long) ecdsaCnt * ECDSA_ENERGY_PER_SIGN
-            + (long) pqCnt * PQ_ENERGY_PER_SIGN;
-      } catch (Throwable t) {
-        return (long) MAX_SIZE * PQ_ENERGY_PER_SIGN;
-      }
-    }
-
-    @Override
-    public Pair<Boolean, byte[]> execute(byte[] rawData) {
-      if (!isValidAbiHead(rawData, ABI_HEAD_WORDS)) {
-        return Pair.of(false, EMPTY_BYTE_ARRAY);
-      }
-      try {
-        DataWord[] words = DataWord.parseArray(rawData);
-        if (!isValidArrayOffset(words, 3, ABI_HEAD_WORDS)
-            || !isValidArrayOffset(words, 4, ABI_HEAD_WORDS)
-            || !isValidArrayOffset(words, 5, ABI_HEAD_WORDS)) {
-          return Pair.of(false, EMPTY_BYTE_ARRAY);
-        }
-        byte[] address = words[0].toTronAddress();
-        int permissionId = words[1].intValueSafe();
-        byte[] data = words[2].getData();
-
-        byte[] combine = ByteUtil.merge(address, ByteArray.fromInt(permissionId), data);
-        byte[] hash = Sha256Hash.hash(CommonParameter
-            .getInstance().isECKeyCryptoEngine(), combine);
-
-        int ecdsaArrayWord = words[3].intValueSafe() / WORD_SIZE;
-        int pqSigArrayWord = words[4].intValueSafe() / WORD_SIZE;
-        int pqPkArrayWord = words[5].intValueSafe() / WORD_SIZE;
-
-        int ecdsaCnt = words[ecdsaArrayWord].intValueSafe();
-        int pqSigCnt = words[pqSigArrayWord].intValueSafe();
-        int pqPkCnt = words[pqPkArrayWord].intValueSafe();
-
-        if (pqSigCnt != pqPkCnt
-            || ecdsaCnt + pqSigCnt == 0
-            || ecdsaCnt + pqSigCnt > MAX_SIZE) {
-          return Pair.of(true, DATA_FALSE);
-        }
-
-        byte[][] ecdsaSigs = extractSigArray(words, ecdsaArrayWord, rawData);
-        byte[][] pqSigs = extractBytesArray(words, pqSigArrayWord, rawData);
-        byte[][] pqPks = extractBytesArray(words, pqPkArrayWord, rawData);
-
-        AccountCapsule account = this.getDeposit().getAccount(address);
-        if (account == null) {
-          return Pair.of(true, DATA_FALSE);
-        }
-        Permission permission = account.getPermissionById(permissionId);
-        if (permission == null) {
-          return Pair.of(true, DATA_FALSE);
-        }
-
-        long totalWeight = 0L;
-        List<byte[]> executedSignList = new ArrayList<>();
-
-        for (byte[] sign : ecdsaSigs) {
-          byte[] recoveredAddr = recoverAddrBySign(sign, hash);
-          byte[] dedupKey = merge(recoveredAddr, sign);
-          if (ByteArray.matrixContains(executedSignList, recoveredAddr)) {
-            if (ByteArray.matrixContains(executedSignList, dedupKey)) {
-              continue;
-            }
-            MUtil.checkCPUTime();
-          }
-          long weight = TransactionCapsule.getWeight(permission, recoveredAddr);
-          if (weight == 0) {
-            return Pair.of(true, DATA_FALSE);
-          }
-          totalWeight += weight;
-          executedSignList.add(dedupKey);
-          executedSignList.add(recoveredAddr);
-        }
-
-        for (int i = 0; i < pqSigs.length; i++) {
-          byte[] sig = pqSigs[i];
-          byte[] pk = pqPks[i];
-          if (pk == null || pk.length != PK_LEN
-              || sig == null || sig.length < 1 || sig.length > MAX_SIG_LEN) {
-            return Pair.of(true, DATA_FALSE);
-          }
-          byte[] derivedAddr;
-          try {
-            derivedAddr = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pk);
-          } catch (Throwable t) {
-            return Pair.of(true, DATA_FALSE);
-          }
-          // Falcon-512 signing is randomized: the same key can produce many distinct
-          // valid signatures for the same hash. Dedup must therefore key on the
-          // derived address alone, otherwise an attacker could replay one key into
-          // the threshold N times via N different signatures.
-          if (ByteArray.matrixContains(executedSignList, derivedAddr)) {
-            continue;
-          }
-          long weight = TransactionCapsule.getWeight(permission, derivedAddr);
-          if (weight == 0) {
-            return Pair.of(true, DATA_FALSE);
-          }
-          if (!FNDSA512.verify(pk, hash, sig)) {
-            return Pair.of(true, DATA_FALSE);
-          }
-          totalWeight += weight;
-          executedSignList.add(derivedAddr);
-        }
-
-        if (totalWeight >= permission.getThreshold()) {
-          return Pair.of(true, dataOne());
-        }
-      } catch (Throwable t) {
-        if (t instanceof OutOfTimeException) {
-          throw t;
-        }
-      }
-      return Pair.of(true, DATA_FALSE);
-    }
-  }
 
   /**
    * 0x18 BatchValidateFnDsa512 — independent per-element Falcon-512 verify.
@@ -2703,11 +2575,16 @@ public class PrecompiledContracts {
    * <pre>
    *   batchValidateFnDsa512(
    *       bytes32   hash,                  // word[0]
-   *       bytes[]   signatures,            // word[1] = offset; each 1..752 B
+   *       bytes[]   signatures,            // word[1] = offset; each 666 B (zero-padded slot,
+   *                                        //          logical sig ends at last non-zero byte)
    *       bytes[]   publicKeys,            // word[2] = offset; each 896 B
    *       bytes32[] expectedAddresses      // word[3] = offset; 21-byte addr in low 21 bytes
    *   ) returns (bytes32)
    * </pre>
+   *
+   * <p>Falcon sigs are pinned to the 666-byte slot from {@code VerifyFnDsa512} (0x16)
+   * for cross-precompile consistency; {@link #recoverFalconSigLen} trims the slot to
+   * the canonical {@code [41, 666]} length before BC verification.
    *
    * <p>Reuses the {@code BatchValidateSign.workers} pool when not in a constant
    * call and enforces {@code getCPUTimeLeftInNanoSecond()} timeout. {@code MAX_SIZE = 16}.
@@ -2718,7 +2595,8 @@ public class PrecompiledContracts {
     private static final int ENERGY_PER_SIGN = 2000;
     private static final int MAX_SIZE = 16;
     private static final int PK_LEN = FNDSA512.PUBLIC_KEY_LENGTH;
-    private static final int MAX_SIG_LEN = FNDSA512.SIGNATURE_LENGTH;
+    private static final int SIG_SLOT_LEN = FNDSA512.SIGNATURE_LENGTH;
+    private static final int SIG_MIN_LEN = FNDSA512.SIGNATURE_MIN_LENGTH;
     // hash, sigArrayOffset, pkArrayOffset, addrArrayOffset.
     private static final int ABI_HEAD_WORDS = 4;
 
@@ -2823,15 +2701,20 @@ public class PrecompiledContracts {
     private static boolean verifyOne(byte[] sig, byte[] pk, byte[] hash,
                                      byte[] expectedAddr) {
       if (pk == null || pk.length != PK_LEN
-          || sig == null || sig.length < 1 || sig.length > MAX_SIG_LEN) {
+          || sig == null || sig.length != SIG_SLOT_LEN) {
         return false;
       }
+      int logical = recoverFalconSigLen(sig, 0, sig.length);
+      if (logical < SIG_MIN_LEN) {
+        return false;
+      }
+      byte[] canonicalSig = Arrays.copyOf(sig, logical);
       try {
         byte[] derived = PQSchemeRegistry.computeAddress(PQScheme.FN_DSA_512, pk);
         if (!DataWord.equalAddressByteArray(derived, expectedAddr)) {
           return false;
         }
-        return FNDSA512.verify(pk, hash, sig);
+        return FNDSA512.verify(pk, hash, canonicalSig);
       } catch (Throwable t) {
         return false;
       }
@@ -2869,20 +2752,17 @@ public class PrecompiledContracts {
   /**
    * Verifies an ML-DSA-44 signature (FIPS 204 / CRYSTALS-Dilithium-2).
    *
-   * <p>Input layout (fixed-length):
-   * <pre>
-   *   [msg 32B | sig 2420B | pk 1312B]   // total 3764 B, strict equality
-   * </pre>
-   * Uses the standard 1312-byte public key encoding {@code rho ‖ t1}. EIP-8051
-   * defines an alternative 22964-byte "expanded" public-key layout
-   * ({@code A_hat ‖ tr ‖ t1_NTT}) that lets the verifier skip {@code ExpandA(rho)};
-   * we deliberately diverge from that to call BC's stock {@code MLDSASigner}
-   * directly. Solidity callers that already produce 1312-byte standard keys
-   * can use this precompile unchanged; an expanded-pk variant can be added
-   * later without re-numbering this slot.
+   * <p>Input layout: {@code [msg 32B | sig 2420B | pk 1312B]} — total 3764 B,
+   * strict equality. Returns a 32-byte word (1 on valid, 0 otherwise);
+   * malformed input returns 0 without error.
    *
-   * <p>Returns a 32-byte word: 1 on valid signature, 0 otherwise. Malformed
-   * input (wrong length) returns 0 without error.
+   * <p><b>Diverges from EIP-8051 on pk only.</b> {@code msg} and {@code sig}
+   * match EIP-8051; {@code pk} uses the standard FIPS-204 §4 encoding
+   * {@code rho ‖ t1} (1312 B) instead of EIP-8051's 20512 B expanded form
+   * (precomputed {@code A_hat = ExpandA(rho)}). BC 1.84's {@code MLDSASigner}
+   * only accepts the standard form; we pay the per-call {@code ExpandA}
+   * cost so 1312 B Dilithium-2 keys work unchanged. An expanded-pk variant,
+   * if added later, will get a new precompile slot — 0x19 stays as-is.
    */
   public static class VerifyMlDsa44 extends PrecompiledContract {
 
@@ -2914,32 +2794,77 @@ public class PrecompiledContracts {
   }
 
   /**
-   * 0x1a ValidateMultiMlDsa44 — algorithm-agnostic Permission multi-sign for
-   * ML-DSA-44, mirroring 0x17's ABI and mixed-weight semantics. Each pq
-   * signature is exactly 2420 B and each pq public key is exactly 1312 B.
-   * {@code MAX_SIZE = 5}; energy is {@code ecdsaCnt × 1500 + pqCnt × 4000}
-   * (Dilithium verify is ~2× a Falcon verify in our microbenchmarks).
+   * 0x1a ValidateMultiPQSig — algorithm-agnostic Permission multi-sign. Accepts
+   * ECDSA plus any registered post-quantum scheme (FN-DSA-512, ML-DSA-44, ...)
+   * against {@link Permission}{@code .keys[]} in a single call, dispatched per
+   * entry by an explicit {@code uint8[]} scheme tag array (PQScheme number).
+   *
+   * <p>ABI:
+   * <pre>
+   *   validateMultiPqSign(
+   *       address account,        // word[0]
+   *       uint256 permissionId,   // word[1]
+   *       bytes32 data,           // word[2]
+   *       bytes[] ecdsaSigs,      // word[3] = offset; 65 B each
+   *       uint8[] pqSchemes,      // word[4] = offset; FN_DSA_512=1, ML_DSA_44=2
+   *       bytes[] pqSigs,         // word[5] = offset; per-scheme fixed slot
+   *       bytes[] pqPks           // word[6] = offset; per-scheme exact length
+   *   ) returns (bytes32)         // 1 on (totalWeight >= threshold), 0 otherwise
+   * </pre>
+   *
+   * <p>Falcon sigs follow the EIP-8052 666-byte fixed slot convention (matches
+   * 0x16/0x18): the slot is zero-padded and the logical sig ends at the last
+   * non-zero byte (Falcon's canonical encoding always ends with a non-zero
+   * {@code compressed_s2} terminator). Dilithium sigs are exactly 2420 B and
+   * Dilithium pks 1312 B.
+   *
+   * <p>{@code MAX_SIZE = 5} across ECDSA + PQ entries combined. Energy is
+   * {@code ecdsaCnt × 1500 + sum_i pqEnergy(scheme_i)} with FN-DSA-512 = 2000
+   * and ML-DSA-44 = 4000. Unknown tags are charged at worst case so an attacker
+   * cannot underpay by encoding a tag the dispatcher will then reject.
+   *
+   * <p>Per-entry runtime gate: a Falcon entry returns {@code DATA_FALSE} when
+   * {@code allowFnDsa512()} is false even though 0x1a itself is registered as
+   * long as one PQ proposal is active. Same for ML-DSA-44.
    */
-  public static class ValidateMultiMlDsa44 extends PrecompiledContract {
+  public static class ValidateMultiPQSig extends PrecompiledContract {
 
     private static final int ECDSA_ENERGY_PER_SIGN = 1500;
-    private static final int PQ_ENERGY_PER_SIGN = 4000;
+    private static final int FN_DSA_512_ENERGY = 2000;
+    private static final int ML_DSA_44_ENERGY = 4000;
+    private static final int WORST_PQ_ENERGY = ML_DSA_44_ENERGY;
     private static final int MAX_SIZE = 5;
-    private static final int PK_LEN = MLDSA44.PUBLIC_KEY_LENGTH;
-    private static final int SIG_LEN = MLDSA44.SIGNATURE_LENGTH;
-    // address, permissionId, data, ecdsaOffset, pqSigOffset, pqPkOffset.
-    private static final int ABI_HEAD_WORDS = 6;
+    // address, permissionId, data, ecdsaOff, schemeOff, pqSigOff, pqPkOff.
+    private static final int ABI_HEAD_WORDS = 7;
+
+    private static final Map<PQScheme, Integer> PQ_ENERGY;
+
+    static {
+      EnumMap<PQScheme, Integer> m = new EnumMap<>(PQScheme.class);
+      m.put(PQScheme.FN_DSA_512, FN_DSA_512_ENERGY);
+      m.put(PQScheme.ML_DSA_44, ML_DSA_44_ENERGY);
+      PQ_ENERGY = m;
+    }
 
     @Override
     public long getEnergyForData(byte[] data) {
       try {
         DataWord[] words = DataWord.parseArray(data);
         int ecdsaCnt = words[words[3].intValueSafe() / WORD_SIZE].intValueSafe();
-        int pqCnt = words[words[4].intValueSafe() / WORD_SIZE].intValueSafe();
-        return (long) ecdsaCnt * ECDSA_ENERGY_PER_SIGN
-            + (long) pqCnt * PQ_ENERGY_PER_SIGN;
+        int schemeOff = words[4].intValueSafe() / WORD_SIZE;
+        int pqCnt = words[schemeOff].intValueSafe();
+        long energy = (long) ecdsaCnt * ECDSA_ENERGY_PER_SIGN;
+        for (int i = 0; i < pqCnt; i++) {
+          int tag = words[schemeOff + 1 + i].intValueSafe();
+          PQScheme s = PQScheme.forNumber(tag);
+          Integer cost = s == null ? null : PQ_ENERGY.get(s);
+          // Unknown / unregistered tag → charge worst case so a caller can't
+          // encode a junk tag to underpay before execute() rejects it.
+          energy += cost == null ? WORST_PQ_ENERGY : cost;
+        }
+        return energy;
       } catch (Throwable t) {
-        return (long) MAX_SIZE * PQ_ENERGY_PER_SIGN;
+        return (long) MAX_SIZE * WORST_PQ_ENERGY;
       }
     }
 
@@ -2952,7 +2877,8 @@ public class PrecompiledContracts {
         DataWord[] words = DataWord.parseArray(rawData);
         if (!isValidArrayOffset(words, 3, ABI_HEAD_WORDS)
             || !isValidArrayOffset(words, 4, ABI_HEAD_WORDS)
-            || !isValidArrayOffset(words, 5, ABI_HEAD_WORDS)) {
+            || !isValidArrayOffset(words, 5, ABI_HEAD_WORDS)
+            || !isValidArrayOffset(words, 6, ABI_HEAD_WORDS)) {
           return Pair.of(false, EMPTY_BYTE_ARRAY);
         }
         byte[] address = words[0].toTronAddress();
@@ -2964,22 +2890,28 @@ public class PrecompiledContracts {
             .getInstance().isECKeyCryptoEngine(), combine);
 
         int ecdsaArrayWord = words[3].intValueSafe() / WORD_SIZE;
-        int pqSigArrayWord = words[4].intValueSafe() / WORD_SIZE;
-        int pqPkArrayWord = words[5].intValueSafe() / WORD_SIZE;
+        int schemeArrayWord = words[4].intValueSafe() / WORD_SIZE;
+        int pqSigArrayWord = words[5].intValueSafe() / WORD_SIZE;
+        int pqPkArrayWord = words[6].intValueSafe() / WORD_SIZE;
 
         int ecdsaCnt = words[ecdsaArrayWord].intValueSafe();
+        int schemeCnt = words[schemeArrayWord].intValueSafe();
         int pqSigCnt = words[pqSigArrayWord].intValueSafe();
         int pqPkCnt = words[pqPkArrayWord].intValueSafe();
 
-        if (pqSigCnt != pqPkCnt
-            || ecdsaCnt + pqSigCnt == 0
-            || ecdsaCnt + pqSigCnt > MAX_SIZE) {
+        if (schemeCnt != pqSigCnt || schemeCnt != pqPkCnt
+            || ecdsaCnt + schemeCnt == 0
+            || ecdsaCnt + schemeCnt > MAX_SIZE) {
           return Pair.of(true, DATA_FALSE);
         }
 
         byte[][] ecdsaSigs = extractSigArray(words, ecdsaArrayWord, rawData);
         byte[][] pqSigs = extractBytesArray(words, pqSigArrayWord, rawData);
         byte[][] pqPks = extractBytesArray(words, pqPkArrayWord, rawData);
+        int[] schemes = new int[schemeCnt];
+        for (int i = 0; i < schemeCnt; i++) {
+          schemes[i] = words[schemeArrayWord + 1 + i].intValueSafe();
+        }
 
         AccountCapsule account = this.getDeposit().getAccount(address);
         if (account == null) {
@@ -3011,22 +2943,46 @@ public class PrecompiledContracts {
           executedSignList.add(recoveredAddr);
         }
 
-        for (int i = 0; i < pqSigs.length; i++) {
+        for (int i = 0; i < schemes.length; i++) {
+          PQScheme scheme = PQScheme.forNumber(schemes[i]);
+          if (scheme == null || scheme == PQScheme.UNKNOWN_PQ_SCHEME
+              || !PQSchemeRegistry.contains(scheme)) {
+            return Pair.of(true, DATA_FALSE);
+          }
+          // Per-entry runtime gate: the scheme's proposal must be active even
+          // though 0x1a was registered under (allowFnDsa512 || allowMlDsa44).
+          if (scheme == PQScheme.FN_DSA_512 && !VMConfig.allowFnDsa512()) {
+            return Pair.of(true, DATA_FALSE);
+          }
+          if (scheme == PQScheme.ML_DSA_44 && !VMConfig.allowMlDsa44()) {
+            return Pair.of(true, DATA_FALSE);
+          }
           byte[] sig = pqSigs[i];
           byte[] pk = pqPks[i];
-          if (pk == null || pk.length != PK_LEN
-              || sig == null || sig.length != SIG_LEN) {
+          int expectedPkLen = PQSchemeRegistry.getPublicKeyLength(scheme);
+          int expectedSigSlot = PQSchemeRegistry.getSignatureLength(scheme);
+          if (pk == null || pk.length != expectedPkLen
+              || sig == null || sig.length != expectedSigSlot) {
+            // Slot lengths are exact here (Falcon = 666, Dilithium = 2420) —
+            // a Falcon sig mislabelled as Dilithium fails this check.
             return Pair.of(true, DATA_FALSE);
+          }
+          if (scheme == PQScheme.FN_DSA_512) {
+            int logical = recoverFalconSigLen(sig, 0, sig.length);
+            if (logical < FNDSA512.SIGNATURE_MIN_LENGTH) {
+              return Pair.of(true, DATA_FALSE);
+            }
+            sig = Arrays.copyOf(sig, logical);
           }
           byte[] derivedAddr;
           try {
-            derivedAddr = PQSchemeRegistry.computeAddress(PQScheme.ML_DSA_44, pk);
+            derivedAddr = PQSchemeRegistry.computeAddress(scheme, pk);
           } catch (Throwable t) {
             return Pair.of(true, DATA_FALSE);
           }
-          // ML-DSA signing is randomized (rho' is hashed from the seeded RNG),
-          // so the same key can produce many valid signatures for one message.
-          // Dedup keyed on the derived address — same reasoning as 0x17.
+          // Both Falcon and Dilithium signing are randomized → the same key
+          // can produce many valid sigs for one message, so dedup keys on the
+          // derived address only (the sig blob is not a stable identity).
           if (ByteArray.matrixContains(executedSignList, derivedAddr)) {
             continue;
           }
@@ -3034,7 +2990,7 @@ public class PrecompiledContracts {
           if (weight == 0) {
             return Pair.of(true, DATA_FALSE);
           }
-          if (!MLDSA44.verify(pk, hash, sig)) {
+          if (!PQSchemeRegistry.verify(scheme, pk, hash, sig)) {
             return Pair.of(true, DATA_FALSE);
           }
           totalWeight += weight;

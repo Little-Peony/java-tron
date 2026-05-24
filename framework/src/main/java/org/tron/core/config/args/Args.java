@@ -497,6 +497,8 @@ public class Args extends CommonParameter {
     PARAMETER.dynamicEnergyThreshold = cc.getDynamicEnergyThreshold();
     PARAMETER.dynamicEnergyIncreaseFactor = cc.getDynamicEnergyIncreaseFactor();
     PARAMETER.dynamicEnergyMaxFactor = cc.getDynamicEnergyMaxFactor();
+    PARAMETER.allowFnDsa512 = cc.getAllowFnDsa512();
+    PARAMETER.allowMlDsa44 = cc.getAllowMlDsa44();
   }
 
   /**
@@ -783,14 +785,6 @@ public class Args extends CommonParameter {
     eventConfig = EventConfig.fromConfig(config);
     applyEventConfig(eventConfig);
 
-    PARAMETER.allowFnDsa512 =
-        config.hasPath(ConfigKey.COMMITTEE_ALLOW_FN_DSA_512) ? config
-            .getInt(ConfigKey.COMMITTEE_ALLOW_FN_DSA_512) : 0;
-
-    PARAMETER.allowMlDsa44 =
-        config.hasPath(ConfigKey.COMMITTEE_ALLOW_ML_DSA_44) ? config
-            .getInt(ConfigKey.COMMITTEE_ALLOW_ML_DSA_44) : 0;
-
     logConfig();
   }
 
@@ -942,8 +936,7 @@ public class Args extends CommonParameter {
     boolean hasCliPriv = StringUtils.isNotBlank(cmd.privateKey);
     boolean hasCfgPriv = !lwConfig.getPrivateKeys().isEmpty();
     boolean hasKeystore = !lwConfig.getKeystores().isEmpty();
-    boolean hasPqKeys = config.hasPath(ConfigKey.LOCAL_WITNESS_PQ_KEYS)
-        && !config.getConfigList(ConfigKey.LOCAL_WITNESS_PQ_KEYS).isEmpty();
+    boolean hasPqKeys = !lwConfig.getPqEntries().isEmpty();
 
     // Load the ECDSA source. CLI > config localwitness > keystore — the three
     // legacy sources stay mutually exclusive among themselves.
@@ -974,11 +967,11 @@ public class Args extends CommonParameter {
           && StringUtils.isNotBlank(lwConfig.getAccountAddress())) {
         throw new TronError(
             "localWitnessAccountAddress cannot be combined with both legacy and "
-                + ConfigKey.LOCAL_WITNESS_PQ_KEYS + "; remove the override or "
+                + LocalWitnessConfig.PQ_KEYS_PATH + "; remove the override or "
                 + "configure only one key source",
             TronError.ErrCode.WITNESS_INIT);
       }
-      pqWitnesses = buildPqWitnesses(config, pqAccountAddress);
+      pqWitnesses = buildPqWitnesses(lwConfig.getPqEntries(), pqAccountAddress);
     }
 
     if (ecdsaWitnesses == null && pqWitnesses == null) {
@@ -1000,57 +993,51 @@ public class Args extends CommonParameter {
     }
   }
 
-  private static LocalWitnesses buildPqWitnesses(Config config, String accountAddress) {
+  private static LocalWitnesses buildPqWitnesses(List<PqEntryConfig> pqEntries,
+                                                 String accountAddress) {
     // Each entry is an object { scheme = "<PQScheme>", key | seed = "<hex>" }
     // so a single node can host SRs running different PQ algorithms (e.g.
     // Falcon-512 and ML-DSA-44 side by side). `key` carries the expanded
     // priv‖pub hex (any scheme); `seed` carries the keygen seed hex and is
     // accepted only when PQSchemeRegistry.isSeedDeterministic(scheme) is true.
-    List<? extends Config> pqEntries =
-        config.getConfigList(ConfigKey.LOCAL_WITNESS_PQ_KEYS);
+    String path = LocalWitnessConfig.PQ_KEYS_PATH;
     List<PqKeypair> pqKeypairs = new ArrayList<>(pqEntries.size());
-    for (int i = 0; i < pqEntries.size(); i++) {
-      Config entry = pqEntries.get(i);
-      if (!entry.hasPath("scheme")) {
+    for (PqEntryConfig entry : pqEntries) {
+      int i = entry.getIndex();
+      if (entry.getScheme() == null) {
         throw new TronError(String.format(
-            "%s[%d] must define `scheme`",
-            ConfigKey.LOCAL_WITNESS_PQ_KEYS, i),
+            "%s[%d] must define `scheme`", path, i),
             TronError.ErrCode.WITNESS_INIT);
       }
-      boolean hasKey = entry.hasPath("key");
-      boolean hasSeed = entry.hasPath("seed");
-      if (hasKey == hasSeed) {
+      if (entry.hasKey() == entry.hasSeed()) {
         throw new TronError(String.format(
-            "%s[%d] must define exactly one of `key` or `seed`",
-            ConfigKey.LOCAL_WITNESS_PQ_KEYS, i),
+            "%s[%d] must define exactly one of `key` or `seed`", path, i),
             TronError.ErrCode.WITNESS_INIT);
       }
-      String schemeName = entry.getString("scheme");
       PQScheme scheme;
       try {
-        scheme = PQScheme.valueOf(schemeName);
+        scheme = PQScheme.valueOf(entry.getScheme());
       } catch (IllegalArgumentException e) {
         throw new TronError(String.format("invalid %s[%d].scheme: %s",
-            ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, schemeName),
+            path, i, entry.getScheme()),
             TronError.ErrCode.WITNESS_INIT);
       }
       if (!PQSchemeRegistry.contains(scheme)) {
         throw new TronError(String.format(
             "unsupported %s[%d].scheme: %s; registered schemes: %s",
-            ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, schemeName,
-            PQSchemeRegistry.registeredSchemes()),
+            path, i, entry.getScheme(), PQSchemeRegistry.registeredSchemes()),
             TronError.ErrCode.WITNESS_INIT);
       }
       String privHex;
       String pubHex;
-      if (hasKey) {
+      if (entry.hasKey()) {
         int privHexLen = PQSchemeRegistry.getPrivateKeyLength(scheme) * 2;
         int extHexLen = privHexLen + PQSchemeRegistry.getPublicKeyLength(scheme) * 2;
-        String stripped = stripHexPrefix(entry.getString("key"));
+        String stripped = stripHexPrefix(entry.getKey());
         if (stripped == null || stripped.length() != extHexLen) {
           throw new TronError(String.format(
               "%s[%d].key must be %d hex chars (extended priv‖pub for %s), actual: %d",
-              ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, extHexLen, scheme,
+              path, i, extHexLen, scheme,
               stripped == null ? 0 : stripped.length()),
               TronError.ErrCode.WITNESS_INIT);
         }
@@ -1064,15 +1051,15 @@ public class Args extends CommonParameter {
           throw new TronError(String.format(
               "%s[%d].seed is not supported for %s (non-deterministic keygen); "
                   + "use `key` with the extended priv‖pub hex instead",
-              ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, scheme),
+              path, i, scheme),
               TronError.ErrCode.WITNESS_INIT);
         }
         int seedHexLen = PQSchemeRegistry.getSeedLength(scheme) * 2;
-        String stripped = stripHexPrefix(entry.getString("seed"));
+        String stripped = stripHexPrefix(entry.getSeed());
         if (stripped == null || stripped.length() != seedHexLen) {
           throw new TronError(String.format(
               "%s[%d].seed must be %d hex chars for %s, actual: %d",
-              ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, seedHexLen, scheme,
+              path, i, seedHexLen, scheme,
               stripped == null ? 0 : stripped.length()),
               TronError.ErrCode.WITNESS_INIT);
         }
@@ -1082,7 +1069,7 @@ public class Args extends CommonParameter {
         } catch (RuntimeException e) {
           throw new TronError(String.format(
               "%s[%d].seed is not valid hex for %s: %s",
-              ConfigKey.LOCAL_WITNESS_PQ_KEYS, i, scheme, e.getMessage()),
+              path, i, scheme, e.getMessage()),
               TronError.ErrCode.WITNESS_INIT);
         }
         PQSignature derived = PQSchemeRegistry.fromSeed(scheme, seedBytes);
