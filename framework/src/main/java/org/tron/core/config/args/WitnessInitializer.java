@@ -117,13 +117,15 @@ public class WitnessInitializer {
 
   /**
    * Init for PQ-only witness nodes (no legacy ECDSA key). Each PqKeypair
-   * carries its own PQScheme. When {@code witnessAccountAddress} is blank,
+   * carries its own PQScheme. When {@code pqWitnessAccountAddress} is blank,
    * the address is derived from the first PQ public key via
    * {@link PQSchemeRegistry#computeAddress(PQScheme, byte[])} using that
-   * entry's scheme.
+   * entry's scheme. Only {@code pqWitnessAccountAddress} is populated; the
+   * legacy ECDSA-side field stays {@code null} so downstream callers must
+   * decide which identity (ECDSA vs PQ) to consult.
    */
   public static LocalWitnesses initFromPQOnly(
-      List<PqKeypair> pqKeypairs, String witnessAccountAddress) {
+      List<PqKeypair> pqKeypairs, String pqWitnessAccountAddress) {
     if (pqKeypairs == null || pqKeypairs.isEmpty()) {
       throw new TronError(
           "PQ keypairs must be set for PQ-only witness nodes",
@@ -132,27 +134,24 @@ public class WitnessInitializer {
     LocalWitnesses witnesses = new LocalWitnesses();
     witnesses.setPqKeypairs(pqKeypairs);
 
-    byte[] address;
-    if (StringUtils.isBlank(witnessAccountAddress)) {
-      PqKeypair first = pqKeypairs.get(0);
-      byte[] firstPubKey = ByteArray.fromHexString(first.getPublicKey());
-      address = PQSchemeRegistry.computeAddress(first.getScheme(), firstPubKey);
-      logger.debug("Derived PQ-only witness address from public key");
-    } else {
+    byte[] explicit = null;
+    if (StringUtils.isNotBlank(pqWitnessAccountAddress)) {
       if (pqKeypairs.size() != 1) {
         throw new TronError(
-            "LocalWitnessAccountAddress can only be set when there is only one PQ keypair",
+            "localPqWitnessAccountAddress can only be set when there is only one PQ keypair",
             TronError.ErrCode.WITNESS_INIT);
       }
-      address = Commons.decodeFromBase58Check(witnessAccountAddress);
-      if (address == null) {
+      explicit = Commons.decodeFromBase58Check(pqWitnessAccountAddress);
+      if (explicit == null) {
         throw new TronError(
-            "LocalWitnessAccountAddress format is incorrect",
+            "localPqWitnessAccountAddress format is incorrect",
             TronError.ErrCode.WITNESS_INIT);
       }
-      logger.debug("Got localWitnessAccountAddress from config.conf");
+      logger.debug("Got localPqWitnessAccountAddress from config.conf");
+    } else {
+      logger.debug("Derived PQ-only witness address from public key");
     }
-    witnesses.setWitnessAccountAddress(address);
+    witnesses.initPqWitnessAccountAddress(explicit);
     return witnesses;
   }
 

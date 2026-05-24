@@ -56,6 +56,16 @@ public class LocalWitnesses {
   @Getter
   private byte[] witnessAccountAddress;
 
+  /**
+   * PQ-side counterpart to {@link #witnessAccountAddress}. Distinct from the
+   * ECDSA address so a node can host two different SRs (one ECDSA + one PQ).
+   * When the same SR account authorises both an ECDSA key and a PQ key, both
+   * fields point to the same address.
+   */
+  @Setter
+  @Getter
+  private byte[] pqWitnessAccountAddress;
+
   public LocalWitnesses() {
   }
 
@@ -67,15 +77,42 @@ public class LocalWitnesses {
     setPrivateKeys(privateKeys);
   }
 
+  /**
+   * Resolve the ECDSA witness account address from an explicit override, or
+   * fall back to the first ECDSA private key. PQ-side resolution is handled
+   * separately by {@link #initPqWitnessAccountAddress(byte[])} so the two
+   * consensus paths do not interfere on nodes hosting one SR per scheme.
+   */
   public void initWitnessAccountAddress(final byte[] witnessAddress,
       boolean isECKeyCryptoEngine) {
     if (witnessAddress != null) {
       this.witnessAccountAddress = witnessAddress;
-    } else if (!CollectionUtils.isEmpty(privateKeys)) {
+      return;
+    }
+    if (!CollectionUtils.isEmpty(privateKeys)) {
       byte[] privateKey = ByteArray.fromHexString(getPrivateKey());
       final SignInterface ecKey = SignUtils.fromPrivate(privateKey,
           isECKeyCryptoEngine);
       this.witnessAccountAddress = ecKey.getAddress();
+    }
+  }
+
+  /**
+   * Resolve the PQ witness account address from an explicit override, or fall
+   * back to the first configured PQ keypair's public key. Kept separate from
+   * {@link #initWitnessAccountAddress} so a node running two SRs (one ECDSA +
+   * one PQ) can carry both addresses without one path overwriting the other.
+   */
+  public void initPqWitnessAccountAddress(final byte[] explicit) {
+    if (explicit != null) {
+      this.pqWitnessAccountAddress = explicit;
+      return;
+    }
+    if (!CollectionUtils.isEmpty(pqKeypairs)) {
+      PqKeypair first = pqKeypairs.get(0);
+      byte[] pubKey = ByteArray.fromHexString(first.getPublicKey());
+      this.pqWitnessAccountAddress = PQSchemeRegistry.computeAddress(
+          first.getScheme(), pubKey);
     }
   }
 

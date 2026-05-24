@@ -346,9 +346,12 @@ public class RelayServiceTest extends BaseTest {
       keySizeField.setAccessible(true);
       keySizeField.set(service, 0);
 
-      Field witnessAddressField = clazz.getDeclaredField("witnessAddress");
-      witnessAddressField.setAccessible(true);
-      witnessAddressField.set(service, null);
+      Field ecdsaField = clazz.getDeclaredField("ecdsaWitnessAddress");
+      ecdsaField.setAccessible(true);
+      Field pqField = clazz.getDeclaredField("pqWitnessAddress");
+      pqField.setAccessible(true);
+      ecdsaField.set(service, null);
+      pqField.set(service, null);
 
       Method isActiveWitnessMethod = clazz.getDeclaredMethod("isActiveWitness");
       isActiveWitnessMethod.setAccessible(true);
@@ -356,7 +359,7 @@ public class RelayServiceTest extends BaseTest {
       Boolean result = (Boolean) isActiveWitnessMethod.invoke(service);
       Assert.assertNotEquals(Boolean.TRUE, result);
 
-      witnessAddressField.set(service, ByteString.copyFrom(new byte[21]));
+      ecdsaField.set(service, ByteString.copyFrom(new byte[21]));
       result = (Boolean) isActiveWitnessMethod.invoke(service);
       Assert.assertNotEquals(Boolean.TRUE, result);
     } catch (NoSuchMethodException | NoSuchFieldException

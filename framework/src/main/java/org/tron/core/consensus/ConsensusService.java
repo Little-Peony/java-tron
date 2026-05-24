@@ -74,9 +74,6 @@ public class ConsensusService {
       byte[] privateKeyAddress = SignUtils.fromPrivate(privateKey,
           Args.getInstance().isECKeyCryptoEngine()).getAddress();
       byte[] witnessAddress = Args.getLocalWitnesses().getWitnessAccountAddress();
-      // In mixed (ECDSA + PQ) mode Args refuses the localWitnessAccountAddress
-      // override and leaves witnessAccountAddress null — fall back to the
-      // derived address so the single-witness path stays valid.
       if (witnessAddress == null || witnessAddress.length == 0) {
         witnessAddress = privateKeyAddress;
       }
@@ -101,7 +98,7 @@ public class ConsensusService {
       }
     } else if (pqKeypairs.size() == 1) {
       Miner miner = buildPQMiner(param, pqKeypairs.get(0),
-          Args.getLocalWitnesses().getWitnessAccountAddress());
+          Args.getLocalWitnesses().getPqWitnessAccountAddress());
       miners.add(miner);
       logger.info("Add {} witness (from configured keypair): {}",
           miner.getPqScheme(), Hex.toHexString(miner.getWitnessAddress().toByteArray()));

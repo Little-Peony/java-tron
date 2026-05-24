@@ -954,24 +954,13 @@ public class Args extends CommonParameter {
 
     // Load PQ keypairs independently so a node can host a mix of ECDSA and PQ
     // SRs (e.g. during a rolling migration where some SRs have moved to PQ and
-    // others have not yet).
+    // others have not yet). The PQ side has its own *AccountAddress key
+    // (localPqWitnessAccountAddress) so mixed-mode configs do not have to drop
+    // the legacy override for the ECDSA side.
     LocalWitnesses pqWitnesses = null;
     if (hasPqKeys) {
-      // localWitnessAccountAddress overrides the on-chain witness address for
-      // the single-witness case. In mixed mode (ECDSA + PQ) total witness
-      // count is ≥ 2 and per config.conf the override must be dropped; each
-      // entry derives its address from its own key material instead.
-      String pqAccountAddress =
-          ecdsaWitnesses == null ? lwConfig.getAccountAddress() : null;
-      if (ecdsaWitnesses != null
-          && StringUtils.isNotBlank(lwConfig.getAccountAddress())) {
-        throw new TronError(
-            "localWitnessAccountAddress can only be set with a single witness; "
-                + "drop it when combining legacy localwitness with "
-                + LocalWitnessConfig.PQ_KEYS_PATH,
-            TronError.ErrCode.WITNESS_INIT);
-      }
-      pqWitnesses = buildPqWitnesses(lwConfig.getPqEntries(), pqAccountAddress);
+      pqWitnesses = buildPqWitnesses(
+          lwConfig.getPqEntries(), lwConfig.getPqAccountAddress());
     }
 
     if (ecdsaWitnesses == null && pqWitnesses == null) {
@@ -984,7 +973,14 @@ public class Args extends CommonParameter {
       LocalWitnesses merged = new LocalWitnesses();
       merged.setPrivateKeys(ecdsaWitnesses.getPrivateKeys());
       merged.setPqKeypairs(pqWitnesses.getPqKeypairs());
-      // No witnessAccountAddress in mixed mode: each entry derives its own.
+      // Carry both addresses so a node hosting one ECDSA SR + one PQ SR can
+      // match either schedule slot. Consumers consult the field that matches
+      // their signing path (ECDSA address for ECDSA sigs, PQ address for PQ).
+      merged.initWitnessAccountAddress(
+          ecdsaWitnesses.getWitnessAccountAddress(),
+          PARAMETER.isECKeyCryptoEngine());
+      merged.initPqWitnessAccountAddress(
+          pqWitnesses.getPqWitnessAccountAddress());
       localWitnesses = merged;
     } else if (ecdsaWitnesses != null) {
       localWitnesses = ecdsaWitnesses;

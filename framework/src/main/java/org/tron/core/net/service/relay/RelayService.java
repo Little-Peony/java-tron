@@ -26,6 +26,7 @@ import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.LocalWitnesses;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.Manager;
@@ -75,9 +76,16 @@ public class RelayService {
 
   private final int pqKeySize = Args.getLocalWitnesses().getPqKeypairs().size();
 
-  private final ByteString witnessAddress =
+  // A node may carry an ECDSA witness, a PQ witness, or both (mixed multi-SR).
+  // Either-or-both must be matched against the active schedule, and
+  // fillHelloMessage must announce the address matching the signing path.
+  private final ByteString ecdsaWitnessAddress =
       Args.getLocalWitnesses().getWitnessAccountAddress() != null ? ByteString
           .copyFrom(Args.getLocalWitnesses().getWitnessAccountAddress()) : null;
+
+  private final ByteString pqWitnessAddress =
+      Args.getLocalWitnesses().getPqWitnessAccountAddress() != null ? ByteString
+          .copyFrom(Args.getLocalWitnesses().getPqWitnessAccountAddress()) : null;
 
   private int maxFastForwardNum = Args.getInstance().getMaxFastForwardNum();
 
@@ -97,7 +105,7 @@ public class RelayService {
 
     executorService.scheduleWithFixedDelay(() -> {
       try {
-        if (witnessScheduleStore.getActiveWitnesses().contains(witnessAddress)
+        if (scheduledHere()
             && backupManager.getStatus().equals(BackupStatusEnum.MASTER)) {
           connect();
         } else {
@@ -124,8 +132,11 @@ public class RelayService {
       byte[] digest = Sha256Hash.of(CommonParameter.getInstance()
           .isECKeyCryptoEngine(), ByteArray.fromLong(message.getTimestamp()))
           .getBytes();
+      // Announce the address matching the sig path we are about to take so
+      // the receiving fast-forward node verifies against the right identity.
+      ByteString announceAddress = keySize > 0 ? ecdsaWitnessAddress : pqWitnessAddress;
       Protocol.HelloMessage.Builder builder = message.getHelloMessage().toBuilder()
-          .setAddress(witnessAddress);
+          .setAddress(announceAddress);
       if (keySize > 0) {
         SignInterface cryptoEngine = SignUtils.fromPrivate(
             ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()),
@@ -221,9 +232,13 @@ public class RelayService {
     if (manager.getDynamicPropertiesStore().getAllowMultiSign() != 1) {
       return Arrays.equals(sigAddress, witnessAddr.toByteArray());
     }
-    byte[] witnessPermissionAddress = manager.getAccountStore()
-        .get(witnessAddr.toByteArray()).getWitnessPermissionAddress();
-    return Arrays.equals(sigAddress, witnessPermissionAddress);
+    AccountCapsule account = manager.getAccountStore().get(witnessAddr.toByteArray());
+    if (account == null) {
+      logger.warn("HelloMessage witness account {} not found in accountStore.",
+          ByteArray.toHexString(witnessAddr.toByteArray()));
+      return false;
+    }
+    return Arrays.equals(sigAddress, account.getWitnessPermissionAddress());
   }
 
   private boolean verifyPqAuthSig(byte[] digest, PQAuthSig pqAuthSig,
@@ -257,8 +272,13 @@ public class RelayService {
     if (manager.getDynamicPropertiesStore().getAllowMultiSign() != 1) {
       expected = witnessAddr.toByteArray();
     } else {
-      expected = manager.getAccountStore().get(witnessAddr.toByteArray())
-          .getWitnessPermissionAddress();
+      AccountCapsule account = manager.getAccountStore().get(witnessAddr.toByteArray());
+      if (account == null) {
+        logger.warn("HelloMessage from {}, witness account {} not found in accountStore.",
+            channel.getInetAddress(), ByteArray.toHexString(witnessAddr.toByteArray()));
+        return false;
+      }
+      expected = account.getWitnessPermissionAddress();
     }
     if (!Arrays.equals(derivedAddr, expected)) {
       logger.warn("HelloMessage from {}, pq_auth_sig public key does not bind witness {}.",
@@ -278,8 +298,15 @@ public class RelayService {
     return parameter.isWitness()
         && (keySize > 0 || pqKeySize > 0)
         && fastForwardNodes.size() > 0
-        && witnessScheduleStore.getActiveWitnesses().contains(witnessAddress)
+        && scheduledHere()
         && backupManager.getStatus().equals(BackupStatusEnum.MASTER);
+  }
+
+  // True iff either of this node's witness identities is in the active schedule.
+  private boolean scheduledHere() {
+    List<ByteString> active = witnessScheduleStore.getActiveWitnesses();
+    return (ecdsaWitnessAddress != null && active.contains(ecdsaWitnessAddress))
+        || (pqWitnessAddress != null && active.contains(pqWitnessAddress));
   }
 
   private void connect() {

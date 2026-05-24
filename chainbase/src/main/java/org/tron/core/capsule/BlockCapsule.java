@@ -208,8 +208,13 @@ public class BlockCapsule implements ProtoCapsule<Block> {
     if (dynamicPropertiesStore.getAllowMultiSign() != 1) {
       witnessPermissionAddress = witnessAccountAddress;
     } else {
-      witnessPermissionAddress = accountStore.get(witnessAccountAddress)
-          .getWitnessPermissionAddress();
+      AccountCapsule account = accountStore.get(witnessAccountAddress);
+      if (account == null) {
+        throw new ValidateSignatureException(
+            "witness account not found: "
+                + ByteArray.toHexString(witnessAccountAddress));
+      }
+      witnessPermissionAddress = account.getWitnessPermissionAddress();
     }
 
     boolean hasLegacy = !header.getWitnessSignature().isEmpty();

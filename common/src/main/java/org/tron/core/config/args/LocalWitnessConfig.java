@@ -10,8 +10,10 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Local witness configuration bean.
  * Reads top-level config keys: localwitness, localWitnessAccountAddress,
- * localwitnesskeystore, and localwitness_pq.keys. These are not under a
- * sub-section — they are at the root of config.conf.
+ * localPqWitnessAccountAddress, localwitnesskeystore, and
+ * localwitness_pq.keys. These are not under a sub-section — they are at the
+ * root of config.conf. ECDSA and PQ witness accounts use independent
+ * `*AccountAddress` keys so the two consensus paths do not interfere.
  */
 @Slf4j
 @Getter
@@ -22,6 +24,7 @@ public class LocalWitnessConfig {
 
   private List<String> privateKeys = new ArrayList<>();
   private String accountAddress = null;
+  private String pqAccountAddress = null;
   private List<String> keystores = new ArrayList<>();
   private List<PqEntryConfig> pqEntries = Collections.emptyList();
 
@@ -32,6 +35,9 @@ public class LocalWitnessConfig {
     }
     if (config.hasPath("localWitnessAccountAddress")) {
       lw.accountAddress = config.getString("localWitnessAccountAddress");
+    }
+    if (config.hasPath("localPqWitnessAccountAddress")) {
+      lw.pqAccountAddress = config.getString("localPqWitnessAccountAddress");
     }
     if (config.hasPath("localwitnesskeystore")) {
       lw.keystores = config.getStringList("localwitnesskeystore");

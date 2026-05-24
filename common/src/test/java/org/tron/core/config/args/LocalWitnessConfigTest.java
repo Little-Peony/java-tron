@@ -25,8 +25,19 @@ public class LocalWitnessConfigTest {
     LocalWitnessConfig lw = LocalWitnessConfig.fromConfig(empty);
     assertTrue(lw.getPrivateKeys().isEmpty());
     assertNull(lw.getAccountAddress());
+    assertNull(lw.getPqAccountAddress());
     assertTrue(lw.getKeystores().isEmpty());
     assertTrue(lw.getPqEntries().isEmpty());
+  }
+
+  @Test
+  public void testWithPqAccountAddress() {
+    Config config = withRef(
+        "localWitnessAccountAddress = \"TEcdsaAddr\"\n"
+            + "localPqWitnessAccountAddress = \"TPqAddr\"");
+    LocalWitnessConfig lw = LocalWitnessConfig.fromConfig(config);
+    assertEquals("TEcdsaAddr", lw.getAccountAddress());
+    assertEquals("TPqAddr", lw.getPqAccountAddress());
   }
 
   @Test
