@@ -19,11 +19,15 @@ import org.tron.protos.Protocol.PQScheme;
  * / {@link #verify} provide stateless entry points used by
  * {@link PQSchemeRegistry}.
  *
- * <p>Falcon signatures are <strong>variable-length</strong>: {@link #SIGNATURE_LENGTH}
- * is the protocol-level upper bound, not an exact length. The
- * {@link PQSignature#validateSignature} default treats this as
- * {@code <= SIGNATURE_LENGTH}. BouncyCastle 1.79's {@code FalconNIST.CRYPTO_BYTES}
- * for Falcon-512 is 690 bytes, well below the 752-byte protocol cap.
+ * <p>Falcon signatures are <strong>variable-length</strong>: every accepted
+ * signature must fall within {@code [}{@link #SIGNATURE_MIN_LENGTH}{@code ,}
+ * {@link #SIGNATURE_LENGTH}{@code ]}. {@link #SIGNATURE_LENGTH} (666) matches
+ * the Falcon Round-3 / FIPS-206 draft canonical maximum ({@code sbytelen}) for
+ * Falcon-512; {@link #SIGNATURE_MIN_LENGTH} (41) is the smallest syntactically
+ * well-formed encoding (header byte + 40-byte nonce, before {@code compressed_s2}).
+ * BouncyCastle does not implement Falcon's spec-mandated rejection sampling
+ * (its internal buffer permits up to 689 B); {@link #sign(byte[], byte[])} adds
+ * that loop so produced signatures always respect the canonical cap.
  */
 public final class FNDSA512 implements PQSignature {
 
@@ -49,8 +53,29 @@ public final class FNDSA512 implements PQSignature {
    */
   public static final int PRIVATE_KEY_WITH_PUBLIC_KEY_LENGTH =
       PRIVATE_KEY_LENGTH + PUBLIC_KEY_LENGTH;
-  /** Protocol-level upper bound on Falcon-512 signature length (variable). */
-  public static final int SIGNATURE_LENGTH = 752;
+  /**
+   * Canonical maximum Falcon-512 signature length per Falcon Round-3 / FIPS-206
+   * draft ({@code sbytelen}). Also the protocol-level upper bound: anything
+   * longer is rejected by the verifier and never produced by
+   * {@link #sign(byte[], byte[])} (which loops with fresh randomness if BC
+   * exceeds it).
+   */
+  public static final int SIGNATURE_LENGTH = 666;
+  /**
+   * Smallest syntactically well-formed Falcon-512 encoding: 1-byte header +
+   * 40-byte nonce, with {@code compressed_s2} potentially empty. Real valid
+   * signatures sit well above this — the bound exists to reject obviously
+   * malformed inputs without invoking BC.
+   */
+  public static final int SIGNATURE_MIN_LENGTH = 41;
+  /**
+   * Maximum signing retries before {@link #sign(byte[], byte[])} gives up.
+   * Empirically BC produces signatures above {@link #SIGNATURE_LENGTH} with
+   * probability ≪ 1/5000, so 16 attempts is comfortably above the
+   * spec-targeted rejection rate (~2^-40) — failure probability after 16
+   * retries on honest input is astronomically small.
+   */
+  private static final int SIGN_RETRY_BUDGET = 16;
   /** Falcon keygen seeds an internal SHAKE256 from 48 bytes of randomness. */
   public static final int SEED_LENGTH = 48;
 
@@ -125,10 +150,19 @@ public final class FNDSA512 implements PQSignature {
     return PUBLIC_KEY_LENGTH;
   }
 
-  /** Returns the protocol-level signature length upper bound (signatures are variable-length). */
+  /** Returns the canonical signature length upper bound (signatures are variable-length). */
   @Override
   public int getSignatureLength() {
     return SIGNATURE_LENGTH;
+  }
+
+  /**
+   * FN-DSA signatures are variable-length; the lower bound is the smallest
+   * syntactically well-formed encoding (1-byte header + 40-byte nonce).
+   */
+  @Override
+  public int getSignatureMinLength() {
+    return SIGNATURE_MIN_LENGTH;
   }
 
   @Override
@@ -185,9 +219,12 @@ public final class FNDSA512 implements PQSignature {
       throw new IllegalArgumentException(
           "FN-DSA public key length must be " + PUBLIC_KEY_LENGTH);
     }
-    if (signature == null || signature.length == 0 || signature.length > SIGNATURE_LENGTH) {
+    if (signature == null
+        || signature.length < SIGNATURE_MIN_LENGTH
+        || signature.length > SIGNATURE_LENGTH) {
       throw new IllegalArgumentException(
-          "FN-DSA signature length must be 1.." + SIGNATURE_LENGTH);
+          "FN-DSA signature length must be "
+              + SIGNATURE_MIN_LENGTH + ".." + SIGNATURE_LENGTH);
     }
     if (message == null) {
       throw new IllegalArgumentException("message must not be null");
@@ -207,6 +244,21 @@ public final class FNDSA512 implements PQSignature {
    * ({@link #PRIVATE_KEY_LENGTH} bytes, {@code f ‖ g ‖ F}) or the extended form
    * ({@link #PRIVATE_KEY_WITH_PUBLIC_KEY_LENGTH} bytes, {@code f ‖ g ‖ F ‖ h}).
    * The trailing {@code h} segment is ignored — only {@code (f, g, F)} feed BC's signer.
+   *
+   * <p>Signing is randomized: the same {@code (privateKey, message)} yields different
+   * signature bytes on every call. Only keygen is deterministic from the 48-byte seed.
+   * Downstream code must not cache or dedup by signature-bytes hash; key on the derived
+   * address instead (see the PQ multisig dedup in {@code PrecompiledContracts}).
+   *
+   * <p>Per Falcon Round-3 / FIPS-206 draft the signature MUST be ≤
+   * {@link #SIGNATURE_LENGTH} bytes; if it exceeds, the signer must resample
+   * with a fresh nonce. BouncyCastle does <strong>not</strong> implement this
+   * rejection step — its internal buffer permits up to 689 B and would return
+   * those longer signatures. This wrapper enforces the spec cap by discarding
+   * over-length BC outputs (and BC's own {@code IllegalStateException} from
+   * {@code comp_encode} overflow) and retrying up to {@link #SIGN_RETRY_BUDGET}
+   * times. Each retry draws fresh randomness from {@code SIGNING_RNG}, so on
+   * honest input the budget is astronomically unlikely to be exhausted.
    */
   public static byte[] sign(byte[] privateKey, byte[] message) {
     validatePrivateKeyBytes(privateKey);
@@ -222,11 +274,26 @@ public final class FNDSA512 implements PQSignature {
     FalconPrivateKeyParameters sk = new FalconPrivateKeyParameters(PARAMS, f, g, bigF, new byte[0]);
     FalconSigner signer = new FalconSigner();
     signer.init(true, new ParametersWithRandom(sk, SIGNING_RNG));
-    try {
-      return signer.generateSignature(message);
-    } catch (Exception e) {
-      throw new IllegalStateException("FN-DSA signing failed", e);
+    Exception lastFailure = null;
+    for (int attempt = 0; attempt < SIGN_RETRY_BUDGET; attempt++) {
+      try {
+        byte[] sig = signer.generateSignature(message);
+        if (sig.length <= SIGNATURE_LENGTH) {
+          return sig;
+        }
+        // BC produced a spec-overlong signature; retry with fresh randomness.
+      } catch (IllegalStateException e) {
+        // BC's comp_encode overflowed its internal buffer — equivalent to
+        // a spec-overlong signature; retry.
+        lastFailure = e;
+      } catch (Exception e) {
+        throw new IllegalStateException("FN-DSA signing failed", e);
+      }
     }
+    throw new IllegalStateException(
+        "FN-DSA signing failed: could not produce a signature ≤ "
+            + SIGNATURE_LENGTH + " bytes after " + SIGN_RETRY_BUDGET + " attempts",
+        lastFailure);
   }
 
   /**

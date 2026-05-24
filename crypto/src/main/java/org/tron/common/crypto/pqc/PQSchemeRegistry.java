@@ -198,13 +198,13 @@ public final class PQSchemeRegistry {
   /**
    * Per-scheme signature-length predicate. Fixed-length schemes require exact
    * equality with {@link #getSignatureLength(PQScheme)}; variable-length
-   * schemes ({@code FN_DSA_512}) treat that value as an upper bound and accept
-   * any {@code 1..max}.
+   * schemes ({@code FN_DSA_512}) accept any length in
+   * [{@link FNDSA512#SIGNATURE_MIN_LENGTH}, {@link FNDSA512#SIGNATURE_LENGTH}].
    */
   public static boolean isValidSignatureLength(PQScheme scheme, int length) {
     SchemeInfo info = require(scheme);
     if (scheme == PQScheme.FN_DSA_512) {
-      return length > 0 && length <= info.signatureLength;
+      return length >= FNDSA512.SIGNATURE_MIN_LENGTH && length <= info.signatureLength;
     }
     return length == info.signatureLength;
   }

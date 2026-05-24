@@ -3,14 +3,14 @@ package org.tron.common.crypto.pqc;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
+import org.bouncycastle.crypto.generators.MLDSAKeyPairGenerator;
+import org.bouncycastle.crypto.params.MLDSAKeyGenerationParameters;
+import org.bouncycastle.crypto.params.MLDSAParameters;
+import org.bouncycastle.crypto.params.MLDSAPrivateKeyParameters;
+import org.bouncycastle.crypto.params.MLDSAPublicKeyParameters;
 import org.bouncycastle.crypto.params.ParametersWithRandom;
 import org.bouncycastle.crypto.prng.FixedSecureRandom;
-import org.bouncycastle.pqc.crypto.mldsa.MLDSAKeyGenerationParameters;
-import org.bouncycastle.pqc.crypto.mldsa.MLDSAKeyPairGenerator;
-import org.bouncycastle.pqc.crypto.mldsa.MLDSAParameters;
-import org.bouncycastle.pqc.crypto.mldsa.MLDSAPrivateKeyParameters;
-import org.bouncycastle.pqc.crypto.mldsa.MLDSAPublicKeyParameters;
-import org.bouncycastle.pqc.crypto.mldsa.MLDSASigner;
+import org.bouncycastle.crypto.signers.MLDSASigner;
 import org.tron.protos.Protocol.PQScheme;
 
 /**
@@ -126,21 +126,6 @@ public final class MLDSA44 implements PQSignature {
   @Override
   public boolean verify(byte[] message, byte[] signature) {
     return verify(publicKey, message, signature);
-  }
-
-  /**
-   * Strict fixed-length verify: ML-DSA-44 signatures are exactly
-   * {@link #SIGNATURE_LENGTH} bytes; any other length is rejected before BC
-   * is invoked.
-   */
-  @Override
-  public void validateSignature(byte[] signature) {
-    if (signature == null || signature.length != SIGNATURE_LENGTH) {
-      throw new IllegalArgumentException(
-          "invalid " + getScheme() + " signature length: "
-              + (signature == null ? "null" : signature.length)
-              + ", expected " + SIGNATURE_LENGTH);
-    }
   }
 
   public static boolean verify(byte[] publicKey, byte[] message, byte[] signature) {

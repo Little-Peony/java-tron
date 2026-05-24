@@ -108,8 +108,19 @@ public class FNDSA512Test {
 
   @Test
   public void minimalValidLengthAcceptedByLengthCheck() {
-    byte[] sig = new byte[1];
+    byte[] sig = new byte[FNDSA512.SIGNATURE_MIN_LENGTH];
     keypair.validateSignature(sig);
+  }
+
+  @Test
+  public void belowMinLengthRejectedByLengthCheck() {
+    byte[] sig = new byte[FNDSA512.SIGNATURE_MIN_LENGTH - 1];
+    try {
+      keypair.validateSignature(sig);
+      fail("signature shorter than min should be rejected");
+    } catch (IllegalArgumentException expected) {
+      assertTrue(expected.getMessage().contains("signature length"));
+    }
   }
 
   @Test
@@ -151,7 +162,7 @@ public class FNDSA512Test {
   public void invalidPublicKeyLengthRejected() {
     byte[] badPk = new byte[FNDSA512.PUBLIC_KEY_LENGTH - 1];
     byte[] msg = new byte[] {1};
-    byte[] sig = new byte[16];
+    byte[] sig = new byte[FNDSA512.SIGNATURE_MIN_LENGTH];
     try {
       FNDSA512.verify(badPk, msg, sig);
       fail("short public key should be rejected");
@@ -162,7 +173,7 @@ public class FNDSA512Test {
 
   @Test
   public void nullMessageRejected() {
-    byte[] sig = new byte[16];
+    byte[] sig = new byte[FNDSA512.SIGNATURE_MIN_LENGTH];
     try {
       FNDSA512.verify(pk.getH(), null, sig);
       fail("null message should be rejected");
@@ -198,7 +209,7 @@ public class FNDSA512Test {
 
   @Test
   public void crossAlgoSignatureRejected() {
-    // FN-DSA upper bound is 752 bytes; ML-DSA-44 (2420), ML-DSA-65 (3309),
+    // FN-DSA upper bound is 666 bytes; ML-DSA-44 (2420), ML-DSA-65 (3309),
     // SLH-DSA (7856) all exceed it and must be rejected at the length check.
     byte[] msg = "cross-algo".getBytes();
     int[] foreignLengths = {2420, 3309, 7856};
@@ -272,11 +283,14 @@ public class FNDSA512Test {
   }
 
   @Test
-  public void registryIsValidSignatureLengthRespectsUpperBound() {
-    assertTrue(PQSchemeRegistry.isValidSignatureLength(PQScheme.FN_DSA_512, 1));
+  public void registryIsValidSignatureLengthRespectsBounds() {
+    assertTrue(PQSchemeRegistry.isValidSignatureLength(
+        PQScheme.FN_DSA_512, FNDSA512.SIGNATURE_MIN_LENGTH));
     assertTrue(PQSchemeRegistry.isValidSignatureLength(
         PQScheme.FN_DSA_512, FNDSA512.SIGNATURE_LENGTH));
     assertFalse(PQSchemeRegistry.isValidSignatureLength(PQScheme.FN_DSA_512, 0));
+    assertFalse(PQSchemeRegistry.isValidSignatureLength(
+        PQScheme.FN_DSA_512, FNDSA512.SIGNATURE_MIN_LENGTH - 1));
     assertFalse(PQSchemeRegistry.isValidSignatureLength(
         PQScheme.FN_DSA_512, FNDSA512.SIGNATURE_LENGTH + 1));
   }

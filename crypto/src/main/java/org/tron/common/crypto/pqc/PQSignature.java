@@ -18,6 +18,17 @@ public interface PQSignature {
 
   int getSignatureLength();
 
+  /**
+   * Signature length is logically a band {@code [min, max]}; fixed-length
+   * schemes degenerate to the singleton {@code [max, max]}. The default
+   * returns {@link #getSignatureLength()} so any new fixed-length scheme
+   * gets exact-equality validation for free; variable-length schemes
+   * (e.g. FN-DSA-512) override this to return their true lower bound.
+   */
+  default int getSignatureMinLength() {
+    return getSignatureLength();
+  }
+
   byte[] getPrivateKey();
 
   byte[] getPublicKey();
@@ -58,15 +69,19 @@ public interface PQSignature {
   }
 
   /**
-   * Default upper-bound check, sufficient for variable-length schemes (FN_DSA_512).
-   * Fixed-length schemes override this with strict equality.
+   * Default band check {@code [getSignatureMinLength(), getSignatureLength()]}.
+   * Fixed-length schemes inherit the singleton {@code [max, max]} band — no
+   * override needed; variable-length schemes only need to override
+   * {@link #getSignatureMinLength()}.
    */
   default void validateSignature(byte[] signature) {
-    if (signature == null || signature.length == 0 || signature.length > getSignatureLength()) {
+    int min = getSignatureMinLength();
+    int max = getSignatureLength();
+    if (signature == null || signature.length < min || signature.length > max) {
       throw new IllegalArgumentException(
           "invalid " + getScheme() + " signature length: "
               + (signature == null ? "null" : signature.length)
-              + ", expected 1.." + getSignatureLength());
+              + ", expected " + (min == max ? String.valueOf(max) : (min + ".." + max)));
     }
   }
 }
