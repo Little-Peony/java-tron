@@ -548,6 +548,18 @@ public class PrecompiledContracts {
   }
 
   /**
+   * Best-effort cancellation of all submitted batch-verify tasks. Tasks that
+   * have not yet started execution are removed from the worker queue; tasks
+   * already running receive an interrupt but BouncyCastle's PQ verify routines
+   * do not poll the interrupt flag and will run to completion.
+   */
+  private static void cancelAll(List<? extends Future<?>> futures) {
+    for (Future<?> f : futures) {
+      f.cancel(true);
+    }
+  }
+
+  /**
    * Returns the logical Falcon-512 signature length packed at the start of a
    * fixed slot {@code data[from..to)}: the offset of the last non-zero byte
    * (exclusive). Canonical Falcon encodings always end in a non-zero byte
@@ -2706,6 +2718,7 @@ public class PrecompiledContracts {
             .await(getCPUTimeLeftInNanoSecond(), TimeUnit.NANOSECONDS);
 
         if (!withNoTimeout) {
+          cancelAll(futures);
           logger.info("BatchValidateFnDsa512 timeout");
           throw Program.Exception.notEnoughTime("call BatchValidateFnDsa512 precompile method");
         }
@@ -3131,6 +3144,7 @@ public class PrecompiledContracts {
             .await(getCPUTimeLeftInNanoSecond(), TimeUnit.NANOSECONDS);
 
         if (!withNoTimeout) {
+          cancelAll(futures);
           logger.info("BatchValidateMlDsa44 timeout");
           throw Program.Exception.notEnoughTime("call BatchValidateMlDsa44 precompile method");
         }
