@@ -23,6 +23,7 @@ import org.tron.common.BaseTest;
 import org.tron.common.TestConstants;
 import org.tron.common.crypto.ECKey;
 import org.tron.common.crypto.pqc.FNDSA512;
+import org.tron.common.crypto.pqc.MLDSA44;
 import org.tron.common.crypto.pqc.PQSchemeRegistry;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
@@ -365,7 +366,7 @@ public class TransactionCapsuleTest extends BaseTest {
 
   /**
    * Returns [serializedSize, packSize, maxTxPerBlock] rows ordered by signature size:
-   * ECKey, FN-DSA-512.
+   * ECKey, FN-DSA-512, ML-DSA-44.
    */
   private long[][] measureSizes(Transaction baseTx) {
     final long blockLimit = 2_000_000L;
@@ -377,10 +378,11 @@ public class TransactionCapsuleTest extends BaseTest {
     long ecSerial = ecCap.getInstance().toByteArray().length;
     long ecPack = ecCap.computeTrxSizeForBlockMessage();
 
+    byte[] txid = txId(baseTx);
+
     // FN-DSA-512: variable-length signature (<= 752 bytes) + 897-byte public key
     FNDSA512 kpFn = new FNDSA512();
-    byte[] txidFn = txId(baseTx);
-    byte[] sigFn = FNDSA512.sign(kpFn.getPrivateKey(), txidFn);
+    byte[] sigFn = FNDSA512.sign(kpFn.getPrivateKey(), txid);
     Transaction txFn = baseTx.toBuilder()
         .addPqAuthSig(PQAuthSig.newBuilder()
             .setScheme(PQScheme.FN_DSA_512)
@@ -392,9 +394,24 @@ public class TransactionCapsuleTest extends BaseTest {
     long dFnSerial = txFn.toByteArray().length;
     long dFnPack = capFn.computeTrxSizeForBlockMessage();
 
+    // ML-DSA-44: fixed 2420-byte signature + 1312-byte public key
+    MLDSA44 kpMl = new MLDSA44();
+    byte[] sigMl = MLDSA44.sign(kpMl.getPrivateKey(), txid);
+    Transaction txMl = baseTx.toBuilder()
+        .addPqAuthSig(PQAuthSig.newBuilder()
+            .setScheme(PQScheme.ML_DSA_44)
+            .setPublicKey(ByteString.copyFrom(kpMl.getPublicKey()))
+            .setSignature(ByteString.copyFrom(sigMl))
+            .build())
+        .build();
+    TransactionCapsule capMl = new TransactionCapsule(txMl);
+    long dMlSerial = txMl.toByteArray().length;
+    long dMlPack = capMl.computeTrxSizeForBlockMessage();
+
     return new long[][]{
         {ecSerial,  ecPack,  blockLimit / ecPack},
         {dFnSerial, dFnPack, blockLimit / dFnPack},
+        {dMlSerial, dMlPack, blockLimit / dMlPack},
     };
   }
 
@@ -403,7 +420,7 @@ public class TransactionCapsuleTest extends BaseTest {
     long[][] trx   = measureSizes(buildTransferTx(PQ_OWNER_HEX, 0));
     long[][] trc20 = measureSizes(buildTrc20TransferTx(PQ_OWNER_HEX, 0));
 
-    String[] labels = {"ECKey (ECDSA)", "FN-DSA-512"};
+    String[] labels = {"ECKey (ECDSA)", "FN-DSA-512", "ML-DSA-44"};
     System.out.println("=== TRX transfer ===");
     for (int i = 0; i < labels.length; i++) {
       System.out.printf("  %s: serial=%d B  pack=%d B  maxTx/block=%d%n",
@@ -415,11 +432,17 @@ public class TransactionCapsuleTest extends BaseTest {
           labels[i], trc20[i][0], trc20[i][1], trc20[i][2]);
     }
 
-    // FN-DSA-512 envelope is larger than ECKey, so it fits fewer txs per block.
+    // Both PQ envelopes are larger than ECKey, so they fit fewer txs per block.
+    // ML-DSA-44 (2420 B sig + 1312 B pk) is the heaviest, FN-DSA-512 sits between.
     Assert.assertTrue(trx[1][0] > trx[0][0]);
     Assert.assertTrue(trc20[1][0] > trc20[0][0]);
     Assert.assertTrue(trx[1][2] < trx[0][2]);
     Assert.assertTrue(trc20[1][2] < trc20[0][2]);
+
+    Assert.assertTrue(trx[2][0] > trx[1][0]);
+    Assert.assertTrue(trc20[2][0] > trc20[1][0]);
+    Assert.assertTrue(trx[2][2] < trx[1][2]);
+    Assert.assertTrue(trc20[2][2] < trc20[1][2]);
   }
 
   @Test

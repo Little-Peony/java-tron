@@ -29,8 +29,8 @@ import org.tron.protos.Protocol.PQScheme;
  * derived {@code t1} stays in memory after instantiation).
  *
  * <p>Pure ML-DSA only (no SHA2-512 pre-hash variant). The "pure" mode signs
- * the raw message under SHAKE-256 per FIPS 204 §5.2, matching the verify
- * side of the EVM precompile at address 0x19 (EIP-8051).
+ * the raw message under SHAKE-256 per FIPS 204 §5.2, matching the standard
+ * 1312-byte public key verify path used by the 0x19 precompile.
  */
 public final class MLDSA44 implements PQSignature {
 

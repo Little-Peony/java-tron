@@ -37,6 +37,10 @@ public class LocalWitnesses {
   @Getter
   private List<String> privateKeys = Lists.newArrayList();
 
+  @Setter
+  @Getter
+  private byte[] witnessAccountAddress;
+
   /**
    * Pre-derived PQ keypairs (scheme + private + public, hex), one per witness.
    * Each keypair declares its own PQ scheme so a single node can host SRs
@@ -51,10 +55,6 @@ public class LocalWitnesses {
    */
   @Getter
   private List<PqKeypair> pqKeypairs = Lists.newArrayList();
-
-  @Setter
-  @Getter
-  private byte[] witnessAccountAddress;
 
   /**
    * PQ-side counterpart to {@link #witnessAccountAddress}. Distinct from the

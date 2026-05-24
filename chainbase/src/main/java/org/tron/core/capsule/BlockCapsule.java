@@ -220,22 +220,18 @@ public class BlockCapsule implements ProtoCapsule<Block> {
     boolean hasLegacy = !header.getWitnessSignature().isEmpty();
     boolean hasPq = header.hasPqAuthSig();
 
-    if (!dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
-      if (hasPq) {
+    if (hasLegacy == hasPq) {
+      throw new ValidateSignatureException(
+          hasLegacy
+              ? "witness_signature and pq_auth_sig are mutually exclusive"
+              : "missing witness signature");
+    }
+
+    if (hasPq) {
+      if (!dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
         throw new ValidateSignatureException(
             "pq_auth_sig not allowed: no post-quantum scheme is activated");
       }
-      return validateLegacySignature(header, witnessPermissionAddress);
-    }
-
-    if (hasLegacy && hasPq) {
-      throw new ValidateSignatureException(
-          "witness_signature and pq_auth_sig are mutually exclusive");
-    }
-    if (!hasLegacy && !hasPq) {
-      throw new ValidateSignatureException("missing witness signature");
-    }
-    if (hasPq) {
       return validatePQSignature(dynamicPropertiesStore, witnessPermissionAddress,
           header.getPqAuthSig());
     }
