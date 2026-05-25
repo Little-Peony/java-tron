@@ -37,7 +37,6 @@ import org.tron.core.db.EnergyProcessor;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
-import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.utils.TransactionUtil;
 import org.tron.core.vm.EnergyCost;
 import org.tron.core.vm.LogInfoTriggerParser;
@@ -401,7 +400,7 @@ public class VMActuator implements Actuator2 {
 
       long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
           rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
-          getCpuLimitInUsRatio(rootRepository.getDynamicPropertiesStore()), CommonParameter.getInstance().getConstantCallTimeoutMs());
+          getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
       long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
       ProgramInvoke programInvoke = ProgramInvokeFactory
@@ -515,7 +514,7 @@ public class VMActuator implements Actuator2 {
 
       long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
           rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
-          getCpuLimitInUsRatio(rootRepository.getDynamicPropertiesStore()), CommonParameter.getInstance().getConstantCallTimeoutMs());
+          getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
       long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
       ProgramInvoke programInvoke = ProgramInvokeFactory
@@ -667,7 +666,7 @@ public class VMActuator implements Actuator2 {
   }
 
 
-  private double getCpuLimitInUsRatio(DynamicPropertiesStore dynamicPropertiesStore) {
+  private double getCpuLimitInUsRatio() {
 
     double cpuLimitRatio;
 
