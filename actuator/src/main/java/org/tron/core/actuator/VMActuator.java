@@ -178,8 +178,7 @@ public class VMActuator implements Actuator2 {
     ProgramResult result = context.getProgramResult();
     try {
       if (program != null) {
-        if (null != blockCap && blockCap.generatedByMyself && blockCap.hasWitnessSignature(context.getStoreFactory().getChainBaseManager()
-            .getDynamicPropertiesStore())
+        if (null != blockCap && blockCap.generatedByMyself && blockCap.hasWitnessSignature()
             && null != TransactionUtil.getContractRet(trx)
             && contractResult.OUT_OF_TIME == TransactionUtil.getContractRet(trx)) {
           result = program.getResult();
@@ -675,7 +674,7 @@ public class VMActuator implements Actuator2 {
     if (ExecutorType.ET_NORMAL_TYPE == executorType) {
       // self witness generates block
       if (blockCap != null && blockCap.generatedByMyself
-          && !blockCap.hasWitnessSignature(dynamicPropertiesStore)) {
+          && !blockCap.hasWitnessSignature()) {
         cpuLimitRatio = 1.0;
       } else {
         // self witness or other witness or fullnode verifies block
