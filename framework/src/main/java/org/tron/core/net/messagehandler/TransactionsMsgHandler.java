@@ -14,6 +14,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.common.es.ExecutorServiceManager;
+import org.tron.common.prometheus.MetricKeys;
+import org.tron.common.prometheus.Metrics;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.config.args.Args;
@@ -169,8 +171,21 @@ public class TransactionsMsgHandler implements TronMsgHandler {
       return;
     }
 
-    if (advService.getMessage(new Item(trx.getMessageId(), InventoryType.TRX)) != null) {
+    Item item = new Item(trx.getMessageId(), InventoryType.TRX);
+
+    if (advService.getMessage(item) != null) {
       return;
+    }
+
+    // Measure end-to-end fetch latency: from GET_DATA send (recorded in
+    // advInvRequest when consumerInvToFetch picks this peer) to full TXS
+    // received here. Returns null if this tx wasn't actively fetched (e.g.
+    // pushed via gossip without a prior GET_DATA), in which case no sample
+    // is observed.
+    Long requestTime = peer.getAdvInvRequest().remove(item);
+    if (requestTime != null) {
+      Metrics.histogramObserve(MetricKeys.Histogram.TX_FETCH_LATENCY,
+          (System.currentTimeMillis() - requestTime) / Metrics.MILLISECONDS_PER_SECOND);
     }
 
     try {
