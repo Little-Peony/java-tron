@@ -37,7 +37,6 @@ import org.tron.core.db.EnergyProcessor;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
-import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.utils.TransactionUtil;
 import org.tron.core.vm.EnergyCost;
 import org.tron.core.vm.LogInfoTriggerParser;
@@ -178,9 +177,7 @@ public class VMActuator implements Actuator2 {
     ProgramResult result = context.getProgramResult();
     try {
       if (program != null) {
-        if (null != blockCap && blockCap.generatedByMyself && blockCap.hasWitnessSignature(
-            context.getStoreFactory().getChainBaseManager()
-                .getDynamicPropertiesStore())
+        if (null != blockCap && blockCap.generatedByMyself && blockCap.hasWitnessSignature()
             && null != TransactionUtil.getContractRet(trx)
             && contractResult.OUT_OF_TIME == TransactionUtil.getContractRet(trx)) {
           result = program.getResult();
@@ -403,7 +400,7 @@ public class VMActuator implements Actuator2 {
 
       long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
           rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
-          getCpuLimitInUsRatio(rootRepository.getDynamicPropertiesStore()),
+          getCpuLimitInUsRatio(),
           CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
       long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
@@ -518,7 +515,7 @@ public class VMActuator implements Actuator2 {
 
       long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
           rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
-          getCpuLimitInUsRatio(rootRepository.getDynamicPropertiesStore()), CommonParameter.getInstance().getConstantCallTimeoutMs());
+          getCpuLimitInUsRatio(), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
       long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
       ProgramInvoke programInvoke = ProgramInvokeFactory
@@ -670,14 +667,14 @@ public class VMActuator implements Actuator2 {
   }
 
 
-  private double getCpuLimitInUsRatio(DynamicPropertiesStore dynamicPropertiesStore) {
+  private double getCpuLimitInUsRatio() {
 
     double cpuLimitRatio;
 
     if (ExecutorType.ET_NORMAL_TYPE == executorType) {
       // self witness generates block
       if (blockCap != null && blockCap.generatedByMyself
-          && !blockCap.hasWitnessSignature(dynamicPropertiesStore)) {
+          && !blockCap.hasWitnessSignature()) {
         cpuLimitRatio = 1.0;
       } else {
         // self witness or other witness or fullnode verifies block

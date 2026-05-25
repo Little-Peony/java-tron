@@ -125,11 +125,10 @@ public class BlockCapsulePQTest extends BaseTest {
   public void hasWitnessSignatureTrueForPqOnlyBlock() {
     byte[] parentHash = new byte[32];
     BlockCapsule block = buildUnsignedBlock(parentHash);
-    Assert.assertFalse(block.hasWitnessSignature(dbManager.getDynamicPropertiesStore()));
+    Assert.assertFalse(block.hasWitnessSignature());
 
-    dbManager.getDynamicPropertiesStore().saveAllowFnDsa512(1L);
     block.setPqAuthSig(buildPQAuthSig(signPQ(block.getRawHashBytes())));
-    Assert.assertTrue(block.hasWitnessSignature(dbManager.getDynamicPropertiesStore()));
+    Assert.assertTrue(block.hasWitnessSignature());
   }
 
   @Test
