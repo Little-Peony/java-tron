@@ -178,9 +178,8 @@ public class VMActuator implements Actuator2 {
     ProgramResult result = context.getProgramResult();
     try {
       if (program != null) {
-        if (null != blockCap && blockCap.generatedByMyself && blockCap.hasWitnessSignature(
-            context.getStoreFactory().getChainBaseManager()
-                .getDynamicPropertiesStore())
+        if (null != blockCap && blockCap.generatedByMyself && blockCap.hasWitnessSignature(context.getStoreFactory().getChainBaseManager()
+            .getDynamicPropertiesStore())
             && null != TransactionUtil.getContractRet(trx)
             && contractResult.OUT_OF_TIME == TransactionUtil.getContractRet(trx)) {
           result = program.getResult();
@@ -403,8 +402,7 @@ public class VMActuator implements Actuator2 {
 
       long thisTxCPULimitInUs = calculateCpuLimitInUs(isConstantCall,
           rootRepository.getDynamicPropertiesStore().getMaxCpuTimeOfOneTx(),
-          getCpuLimitInUsRatio(rootRepository.getDynamicPropertiesStore()),
-          CommonParameter.getInstance().getConstantCallTimeoutMs());
+          getCpuLimitInUsRatio(rootRepository.getDynamicPropertiesStore()), CommonParameter.getInstance().getConstantCallTimeoutMs());
       long vmStartInUs = System.nanoTime() / VMConstant.ONE_THOUSAND;
       long vmShouldEndInUs = vmStartInUs + thisTxCPULimitInUs;
       ProgramInvoke programInvoke = ProgramInvokeFactory

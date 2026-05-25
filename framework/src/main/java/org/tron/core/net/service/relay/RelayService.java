@@ -132,12 +132,16 @@ public class RelayService {
       byte[] digest = Sha256Hash.of(CommonParameter.getInstance()
           .isECKeyCryptoEngine(), ByteArray.fromLong(message.getTimestamp()))
           .getBytes();
-      // Announce the address matching the sig path we are about to take so
-      // the receiving fast-forward node verifies against the right identity.
-      ByteString announceAddress = keySize > 0 ? ecdsaWitnessAddress : pqWitnessAddress;
+      // In a mixed-witness node (ECDSA + PQ), pick the path whose address
+      // is currently in the active schedule — otherwise the receiver
+      // rejects on the "not a schedule witness" check in checkHelloMessage.
+      List<ByteString> active = witnessScheduleStore.getActiveWitnesses();
+      boolean useEcdsa = keySize > 0 && ecdsaWitnessAddress != null
+          && active.contains(ecdsaWitnessAddress);
+      ByteString announceAddress = useEcdsa ? ecdsaWitnessAddress : pqWitnessAddress;
       Protocol.HelloMessage.Builder builder = message.getHelloMessage().toBuilder()
           .setAddress(announceAddress);
-      if (keySize > 0) {
+      if (useEcdsa) {
         SignInterface cryptoEngine = SignUtils.fromPrivate(
             ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()),
             Args.getInstance().isECKeyCryptoEngine());
@@ -145,9 +149,10 @@ public class RelayService {
             cryptoEngine.Base64toBytes(cryptoEngine.signHash(digest)));
         builder.setSignature(sig).clearPqAuthSig();
       } else {
-        // isActiveWitness() guarantees keySize > 0 || pqKeySize > 0; reaching
-        // this branch with keySize == 0 implies pqKeySize > 0. Guard anyway
-        // so a stale or mutated witness list fails loud instead of with IOOB.
+        // scheduledHere() guarantees at least one of ECDSA/PQ is active;
+        // since useEcdsa is false here, the PQ identity must be the active one.
+        // Guard the keypair list anyway so a stale/mutated config fails loud
+        // instead of with IOOB.
         LocalWitnesses lw = Args.getLocalWitnesses();
         if (lw.getPqKeypairs().isEmpty()) {
           logger.warn("HelloMessage fill skipped: no PQ keypair available");

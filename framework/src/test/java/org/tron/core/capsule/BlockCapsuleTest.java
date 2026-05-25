@@ -12,7 +12,6 @@ import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
-import org.mockito.Mockito;
 import org.tron.common.TestConstants;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.LocalWitnesses;
@@ -22,7 +21,6 @@ import org.tron.core.Wallet;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.BadBlockException;
 import org.tron.core.exception.BadItemException;
-import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.contract.BalanceContract.TransferContract;
 
@@ -171,11 +169,10 @@ public class BlockCapsuleTest {
     localWitnesses.initWitnessAccountAddress(null, true);
     Args.setLocalWitnesses(localWitnesses);
 
-    DynamicPropertiesStore dps = Mockito.mock(DynamicPropertiesStore.class);
-    Assert.assertFalse(blockCapsule0.hasWitnessSignature(dps));
+    Assert.assertFalse(blockCapsule0.hasWitnessSignature());
     blockCapsule0
         .sign(ByteArray.fromHexString(Args.getLocalWitnesses().getPrivateKey()));
-    Assert.assertTrue(blockCapsule0.hasWitnessSignature(dps));
+    Assert.assertTrue(blockCapsule0.hasWitnessSignature());
   }
 
   @Test

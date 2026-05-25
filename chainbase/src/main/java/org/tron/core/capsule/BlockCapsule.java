@@ -413,15 +413,10 @@ public class BlockCapsule implements ProtoCapsule<Block> {
     return this.block.getBlockHeader().getRawData().getTimestamp();
   }
 
-  public boolean hasWitnessSignature(DynamicPropertiesStore dynamicPropertiesStore) {
+  public boolean hasWitnessSignature() {
     BlockHeader header = getInstance().getBlockHeader();
-    if (!header.getWitnessSignature().isEmpty()) {
-      return true;
-    }
-    if (!dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
-      return false;
-    }
-    return !header.getPqAuthSig().getSignature().isEmpty();
+    return !header.getWitnessSignature().isEmpty()
+        || !header.getPqAuthSig().getSignature().isEmpty();
   }
 
   @Override
