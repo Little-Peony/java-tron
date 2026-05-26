@@ -89,9 +89,17 @@ public class TransactionsMsgHandler implements TronMsgHandler {
     }
     TransactionsMessage transactionsMessage = (TransactionsMessage) msg;
     check(peer, transactionsMessage);
+    long now = System.currentTimeMillis();
     for (Transaction trx : transactionsMessage.getTransactions().getTransactionsList()) {
       Item item = new Item(new TransactionMessage(trx).getMessageId(), InventoryType.TRX);
-      peer.getAdvInvRequest().remove(item);
+      // Observe end-to-end fetch latency (GET_DATA send → full TXS received)
+      // before consuming the timestamp. Null means this tx wasn't actively
+      // fetched (e.g. pushed via gossip), in which case no sample is recorded.
+      Long requestTime = peer.getAdvInvRequest().remove(item);
+      if (requestTime != null) {
+        Metrics.histogramObserve(MetricKeys.Histogram.TX_FETCH_LATENCY,
+            (now - requestTime) / Metrics.MILLISECONDS_PER_SECOND);
+      }
     }
     int smartContractQueueSize = 0;
     int trxHandlePoolQueueSize = 0;
@@ -175,17 +183,6 @@ public class TransactionsMsgHandler implements TronMsgHandler {
 
     if (advService.getMessage(item) != null) {
       return;
-    }
-
-    // Measure end-to-end fetch latency: from GET_DATA send (recorded in
-    // advInvRequest when consumerInvToFetch picks this peer) to full TXS
-    // received here. Returns null if this tx wasn't actively fetched (e.g.
-    // pushed via gossip without a prior GET_DATA), in which case no sample
-    // is observed.
-    Long requestTime = peer.getAdvInvRequest().remove(item);
-    if (requestTime != null) {
-      Metrics.histogramObserve(MetricKeys.Histogram.TX_FETCH_LATENCY,
-          (System.currentTimeMillis() - requestTime) / Metrics.MILLISECONDS_PER_SECOND);
     }
 
     try {
