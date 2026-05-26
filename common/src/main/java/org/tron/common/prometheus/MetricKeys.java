@@ -67,6 +67,15 @@ public class MetricKeys {
     public static final String BLOCK_FETCH_LATENCY = "tron:block_fetch_latency_seconds";
     public static final String BLOCK_RECEIVE_DELAY = "tron:block_receive_delay_seconds";
     public static final String BLOCK_TRANSACTION_COUNT = "tron:block_transaction_count";
+    /**
+     * Transaction fetch round-trip latency in seconds: from sending
+     * {@code GET_DATA (FETCH_INV_DATA)} to receiving the full {@code TXS}
+     * message.
+     * <p>Transactions pushed via gossip without a prior {@code GET_DATA}
+     * (i.e. not actively fetched by this node) are <b>not sampled</b>;
+     * <p>Companion to {@link #BLOCK_FETCH_LATENCY} for the TX path.
+     */
+    public static final String TX_FETCH_LATENCY = "tron:tx_fetch_latency_seconds";
 
     private Histogram() {
       throw new IllegalStateException("Histogram");
