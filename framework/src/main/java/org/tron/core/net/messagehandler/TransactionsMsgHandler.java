@@ -179,9 +179,7 @@ public class TransactionsMsgHandler implements TronMsgHandler {
       return;
     }
 
-    Item item = new Item(trx.getMessageId(), InventoryType.TRX);
-
-    if (advService.getMessage(item) != null) {
+    if (advService.getMessage(new Item(trx.getMessageId(), InventoryType.TRX)) != null) {
       return;
     }
 
