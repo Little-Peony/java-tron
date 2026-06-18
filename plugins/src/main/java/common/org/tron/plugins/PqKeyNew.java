@@ -7,12 +7,16 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.EnumSet;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import org.bouncycastle.util.encoders.Hex;
 import org.tron.common.crypto.pqc.FNDSA512;
@@ -139,18 +143,22 @@ public class PqKeyNew implements Callable<Integer> {
 
   private static String buildFileName(PQScheme scheme, String address) {
     String ts = TIMESTAMP_FMT.format(Instant.now());
-    String addrShort = address.length() > 9 ? address.substring(0, 9) : address;
-    return "pq--" + scheme.name() + "--" + ts + "--" + addrShort + ".json";
+    return ts + "--" + scheme.name() + "--" + address + ".json";
   }
 
   private static void writeSecureFile(Path path, String content) throws Exception {
-    Files.write(path, content.getBytes(StandardCharsets.UTF_8));
+    byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
     try {
-      Files.setPosixFilePermissions(path, EnumSet.of(
+      // Create the file with 0600 permissions atomically.
+      Set<PosixFilePermission> perms = EnumSet.of(
           PosixFilePermission.OWNER_READ,
-          PosixFilePermission.OWNER_WRITE));
+          PosixFilePermission.OWNER_WRITE);
+      FileAttribute<Set<PosixFilePermission>> attr = PosixFilePermissions.asFileAttribute(perms);
+      Files.createFile(path, attr);
+      Files.write(path, bytes, StandardOpenOption.WRITE);
     } catch (UnsupportedOperationException ignored) {
-      // Non-POSIX filesystem (e.g. Windows); skip permission setting
+      // Non-POSIX filesystem (e.g. Windows): fall back to plain write.
+      Files.write(path, bytes);
     }
   }
 }
