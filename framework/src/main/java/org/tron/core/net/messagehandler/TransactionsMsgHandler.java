@@ -20,6 +20,7 @@ import org.tron.common.prometheus.MetricKeys;
 import org.tron.common.prometheus.Metrics;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.exception.P2pException;
 import org.tron.core.exception.P2pException.TypeEnum;
@@ -159,6 +160,10 @@ public class TransactionsMsgHandler implements TronMsgHandler {
           throw new P2pException(TypeEnum.BAD_TRX,
               "tx " + item.getHash() + " signature size is " + sig.size());
         }
+      }
+      if (!TransactionCapsule.isPqAuthSigLengthValid(trx)) {
+        throw new P2pException(TypeEnum.BAD_TRX,
+            "tx " + item.getHash() + " pq_auth_sig public key or signature length is invalid");
       }
     }
   }

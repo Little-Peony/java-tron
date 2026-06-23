@@ -57,6 +57,10 @@ public class TransactionResult {
 
   private void parseSignature(Transaction tx) {
 
+    // The Ethereum JSON-RPC result models a single ECDSA signature as r/s/v. A
+    // post-quantum (pq_auth_sig) transaction has no ECDSA signature and cannot be
+    // represented in r/s/v form, so it falls through to the zero-filled response
+    // below — same as any other tx without an ECDSA signature.
     if (tx.getSignatureCount() == 0) {
       v = ByteArray.toJsonHex(new byte[1]);
       r = ByteArray.toJsonHex(new byte[32]);

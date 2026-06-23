@@ -242,6 +242,61 @@ public class TransactionCapsuleTest extends BaseTest {
   }
 
   @Test
+  public void totalSignatureCountCountsBothChannels() throws Exception {
+    FNDSA512 kp = new FNDSA512();
+    Transaction tx = buildTransferTx(PQ_OWNER_HEX, 0);
+    byte[] sig = FNDSA512.sign(kp.getPrivateKey(), txId(tx));
+    PQAuthSig pq = PQAuthSig.newBuilder()
+        .setScheme(PQScheme.FN_DSA_512)
+        .setPublicKey(ByteString.copyFrom(kp.getPublicKey()))
+        .setSignature(ByteString.copyFrom(sig)).build();
+
+    Transaction ecdsaOnly = tx.toBuilder()
+        .addSignature(ByteString.copyFrom(new byte[65])).build();
+    Assert.assertEquals(1, new TransactionCapsule(ecdsaOnly).getTotalSignatureCount());
+
+    Transaction pqOnly = tx.toBuilder().addPqAuthSig(pq).build();
+    Assert.assertEquals(1, new TransactionCapsule(pqOnly).getTotalSignatureCount());
+
+    // 1 ECDSA + 2 PQ -> 3 (the case getSignatureCount() alone mis-counts as 1).
+    Transaction mixed = tx.toBuilder()
+        .addSignature(ByteString.copyFrom(new byte[65]))
+        .addPqAuthSig(pq).addPqAuthSig(pq).build();
+    Assert.assertEquals(3, new TransactionCapsule(mixed).getTotalSignatureCount());
+  }
+
+  @Test
+  public void pqAuthSigLengthPreFilter() throws Exception {
+    FNDSA512 kp = new FNDSA512();
+    Transaction tx = buildTransferTx(PQ_OWNER_HEX, 0);
+    byte[] sig = FNDSA512.sign(kp.getPrivateKey(), txId(tx));
+
+    Transaction valid = tx.toBuilder().addPqAuthSig(PQAuthSig.newBuilder()
+        .setScheme(PQScheme.FN_DSA_512)
+        .setPublicKey(ByteString.copyFrom(kp.getPublicKey()))
+        .setSignature(ByteString.copyFrom(sig)).build()).build();
+    Assert.assertTrue(TransactionCapsule.isPqAuthSigLengthValid(valid));
+
+    // Wrong public-key length -> rejected by the cheap pre-filter.
+    Transaction badPk = tx.toBuilder().addPqAuthSig(PQAuthSig.newBuilder()
+        .setScheme(PQScheme.FN_DSA_512)
+        .setPublicKey(ByteString.copyFrom(new byte[10]))
+        .setSignature(ByteString.copyFrom(sig)).build()).build();
+    Assert.assertFalse(TransactionCapsule.isPqAuthSigLengthValid(badPk));
+
+    // Unknown scheme -> deferred to full validation, must pass the cheap pre-filter
+    // (forward-compat: an old node must not reject a future scheme here).
+    Transaction unknown = tx.toBuilder().addPqAuthSig(PQAuthSig.newBuilder()
+        .setSchemeValue(9999)
+        .setPublicKey(ByteString.copyFrom(new byte[10]))
+        .setSignature(ByteString.copyFrom(new byte[10])).build()).build();
+    Assert.assertTrue(TransactionCapsule.isPqAuthSigLengthValid(unknown));
+
+    // No pq_auth_sig -> trivially valid.
+    Assert.assertTrue(TransactionCapsule.isPqAuthSigLengthValid(tx));
+  }
+
+  @Test
   public void duplicateSignerRejected() throws Exception {
     dbManager.getDynamicPropertiesStore().saveAllowFnDsa512(1L);
     FNDSA512 kp = new FNDSA512();

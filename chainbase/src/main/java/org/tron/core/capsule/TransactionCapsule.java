@@ -79,7 +79,6 @@ import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
-import org.tron.protos.Protocol.Transaction.raw;
 import org.tron.protos.contract.AccountContract.AccountCreateContract;
 import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
 import org.tron.protos.contract.AssetIssueContractOuterClass.ParticipateAssetIssueContract;
@@ -202,11 +201,6 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
 
   public TransactionCapsule(ParticipateAssetIssueContract participateAssetIssueContract) {
     createTransaction(participateAssetIssueContract, ContractType.ParticipateAssetIssueContract);
-  }
-
-  public TransactionCapsule(raw rawData, List<ByteString> signatureList) {
-    this.transaction = Transaction.newBuilder().setRawData(rawData).addAllSignature(signatureList)
-        .build();
   }
 
   @Deprecated
@@ -715,8 +709,9 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
   void logSlowSigVerify(long startNs) {
     long costMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
     if (costMs > SLOW_SIG_VERIFY_MS) {
-      logger.warn("slow verify: txId={}, sigCount={}, cost={} ms",
-          getTransactionId(), this.transaction.getSignatureCount(), costMs);
+      logger.warn("slow verify: txId={}, sigCount={}, pqSigCount={}, cost={} ms",
+          getTransactionId(), this.transaction.getSignatureCount(),
+          this.transaction.getPqAuthSigCount(), costMs);
     }
   }
 
@@ -825,6 +820,41 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     return this.id;
   }
 
+  /**
+   * Total number of signatures across BOTH authentication channels: the legacy
+   * ECDSA {@code signature} list and the post-quantum {@code pq_auth_sig} list.
+   *
+   * <p>Single source of truth. Any logic that reasons about "how many signatures
+   * does this transaction carry" (multi-sign fee, too-many-signatures caps, ...)
+   * MUST use this instead of {@code getSignatureCount()}; the latter silently
+   * ignores PQ witnesses.
+   */
+  public int getTotalSignatureCount() {
+    return this.transaction.getSignatureCount() + this.transaction.getPqAuthSigCount();
+  }
+
+  /**
+   * Cheap, stateless length sanity-check over the {@code pq_auth_sig} channel,
+   * mirroring the ECDSA {@code SignUtils.isValidLength} pre-filter applied at
+   * network / broadcast intake. Returns {@code false} if any {@code pq_auth_sig}
+   * of a known scheme carries a wrong public-key or signature length. Entries of
+   * an unknown scheme are left for full chain-state validation (forward-compat:
+   * a future scheme must not be rejected by an old node's cheap pre-filter).
+*/
+  public static boolean isPqAuthSigLengthValid(Transaction tx) {
+    for (PQAuthSig pq : tx.getPqAuthSigList()) {
+      PQScheme scheme = pq.getScheme();
+      if (!PQSchemeRegistry.contains(scheme)) {
+        continue;
+      }
+      if (pq.getPublicKey().size() != PQSchemeRegistry.getPublicKeyLength(scheme)
+          || !PQSchemeRegistry.isValidSignatureLength(scheme, pq.getSignature().size())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private void setRawData(Transaction.raw rawData) {
     this.transaction = this.transaction.toBuilder().setRawData(rawData).build();
     // invalidate trxId
@@ -914,6 +944,13 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
         if (this.transaction.getSignatureList().size() >= i.get() + 1) {
           toStringBuff.append("sign=").append(getBase64FromByteString(
               this.transaction.getSignature(i.getAndIncrement()))).append("\n");
+        }
+        // pq_auth_sig mirrors the legacy per-contract sign= printing: pq_auth_sig[i]
+        // is paired with contract[i] by the same index i. Only the scheme is printed;
+        // the PQ signature itself is large (e.g. >1KB ML_DSA_44) and omitted.
+        if (this.transaction.getPqAuthSigList().size() >= i.get() + 1) {
+          toStringBuff.append("pq_sign_scheme=")
+              .append(this.transaction.getPqAuthSig(i.get()).getScheme()).append("\n");
         }
       });
       toStringBuff.append("}\n");
