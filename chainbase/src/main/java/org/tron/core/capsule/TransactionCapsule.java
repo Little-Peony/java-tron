@@ -237,7 +237,7 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     long currentWeight = 0;
     if (sigs.size() > permission.getKeysCount()) {
       throw new PermissionException(
-          "Signature count is " + (sigs.size()) + " more than key counts of permission : "
+          "Signature count " + sigs.size() + " exceeds permission key count "
               + permission.getKeysCount());
     }
     HashMap addMap = new HashMap();
@@ -679,7 +679,8 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       if (signatureCount == 0 || this.transaction.getRawData().getContractCount() <= 0) {
         throw new ValidateSignatureException("miss sig or contract");
       }
-      if (signatureCount > dynamicPropertiesStore.getTotalSignNum()) {
+      int totalSignNum = dynamicPropertiesStore.getTotalSignNum();
+      if (signatureCount > totalSignNum) {
         throw new ValidateSignatureException("too many signatures");
       }
 
@@ -741,22 +742,17 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
     Set<ByteString> signedAddresses = new HashSet<>(approveList);
 
     List<PQAuthSig> pqAuthSigList = transaction.getPqAuthSigList();
-    // Bound the pq_auth_sig count, mirroring the legacy ECDSA checkWeight: each
-    // signature must map to a distinct permission key, so more entries than the
-    // permission has keys can never satisfy the threshold and only wastes
-    // verification work.
+    // A PQ signer must map to a distinct permission key.
     if (pqAuthSigList.size() > permission.getKeysCount()) {
       throw new PermissionException(
-          "pq_auth_sig count is " + pqAuthSigList.size()
-              + " more than key counts of permission : " + permission.getKeysCount());
+          "pq_auth_sig count " + pqAuthSigList.size()
+              + " exceeds permission key count " + permission.getKeysCount());
     }
 
     long weight = 0L;
     for (PQAuthSig witness : pqAuthSigList) {
-      // Reject nested unknown fields here too, not just at the ingress gates, so
-      // the fixed (scheme/public_key/signature) field set is enforced uniformly
-      // on the consensus path that a block-included tx flows through.
-      if (!PQAuthSigValidator.hasNoUnknownFields(witness)) {
+      // Keep consensus and ingress handling of PQAuthSig wire fields aligned.
+      if (PQAuthSigValidator.hasUnknownFields(witness)) {
         throw new SignatureFormatException("pq_auth_sig contains unknown fields");
       }
       PQScheme scheme = witness.getScheme();

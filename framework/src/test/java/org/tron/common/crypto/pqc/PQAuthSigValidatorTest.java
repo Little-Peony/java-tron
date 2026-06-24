@@ -62,10 +62,10 @@ public class PQAuthSigValidatorTest {
   }
 
   @Test
-  public void hasNoUnknownFieldsReflectsPresenceOfUnknownFields() {
+  public void hasUnknownFieldsReflectsPresenceOfUnknownFields() {
     int pk = PQSchemeRegistry.getPublicKeyLength(PQScheme.FN_DSA_512);
     int s = PQSchemeRegistry.getSignatureLength(PQScheme.FN_DSA_512);
-    assertTrue(PQAuthSigValidator.hasNoUnknownFields(sig(PQScheme.FN_DSA_512, pk, s)));
+    assertFalse(PQAuthSigValidator.hasUnknownFields(sig(PQScheme.FN_DSA_512, pk, s)));
 
     PQAuthSig withUnknown = sig(PQScheme.FN_DSA_512, pk, s).toBuilder()
         .setUnknownFields(UnknownFieldSet.newBuilder()
@@ -73,18 +73,12 @@ public class PQAuthSigValidatorTest {
                 .addLengthDelimited(ByteString.copyFrom(new byte[16])).build())
             .build())
         .build();
-    assertFalse(PQAuthSigValidator.hasNoUnknownFields(withUnknown));
+    assertTrue(PQAuthSigValidator.hasUnknownFields(withUnknown));
   }
 
   @Test
-  public void unknownSchemeFallsBackToGlobalMax() {
-    int maxPk = PQSchemeRegistry.getMaxPublicKeyLength();
-    int maxSig = PQSchemeRegistry.getMaxSignatureLength();
-    // within the global max is accepted even though the scheme is unknown
-    assertTrue(PQAuthSigValidator.isLengthWithinBounds(
-        sig(PQScheme.UNKNOWN_PQ_SCHEME, maxPk, maxSig)));
-    // beyond the global max is rejected
+  public void rejectsUnknownScheme() {
     assertFalse(PQAuthSigValidator.isLengthWithinBounds(
-        sig(PQScheme.UNKNOWN_PQ_SCHEME, maxPk + 1, maxSig)));
+        sig(PQScheme.UNKNOWN_PQ_SCHEME, 0, 0)));
   }
 }

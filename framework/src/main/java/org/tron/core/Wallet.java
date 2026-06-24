@@ -511,24 +511,16 @@ public class Wallet {
     trx.setTime(System.currentTimeMillis());
     Sha256Hash txID = trx.getTransactionId();
     try {
-      // Admission cap, mirroring the consensus check in validatePubSignature:
-      // the total signature entries (legacy + pq) can never exceed totalSignNum
-      // since each must map to a distinct permission key, so reject a flood up
-      // front before the per-entry length loops. This also bounds pq entries,
-      // which — unlike an empty ECDSA sig that isValidLength rejects — would
-      // otherwise pass the per-entry size gate even when empty/default.
-      int sigCount = signedTransaction.getSignatureCount();
-      int pqAuthSigCount = signedTransaction.getPqAuthSigCount();
-      if (sigCount + pqAuthSigCount > 0) {
-        int totalSignNum = chainBaseManager.getDynamicPropertiesStore().getTotalSignNum();
-        if (sigCount + pqAuthSigCount > totalSignNum) {
-          String info = "total signature count " + (sigCount + pqAuthSigCount)
-              + " exceeds " + totalSignNum;
-          logger.warn("Broadcast transaction {} has failed, {}.", txID, info);
-          return builder.setResult(false).setCode(response_code.SIGERROR)
-              .setMessage(ByteString.copyFromUtf8("Validate signature error: " + info))
-              .build();
-        }
+      // Bound signature entry count before per-entry validation.
+      int totalSignCount = signedTransaction.getSignatureCount()
+          + signedTransaction.getPqAuthSigCount();
+      int totalSignNum = chainBaseManager.getDynamicPropertiesStore().getTotalSignNum();
+      if (totalSignCount > totalSignNum) {
+        String info = "total signature count " + totalSignCount + " exceeds " + totalSignNum;
+        logger.warn("Broadcast transaction {} has failed, {}.", txID, info);
+        return builder.setResult(false).setCode(response_code.SIGERROR)
+            .setMessage(ByteString.copyFromUtf8("Validate signature error: " + info))
+            .build();
       }
 
       for (ByteString sig : signedTransaction.getSignatureList()) {
@@ -673,8 +665,8 @@ public class Wallet {
     TransactionApprovedList.Builder tswBuilder = TransactionApprovedList.newBuilder();
     TransactionApprovedList.Result.Builder resultBuilder = TransactionApprovedList.Result
         .newBuilder();
-    if (trx.getSignatureCount() + trx.getPqAuthSigCount()
-        > chainBaseManager.getDynamicPropertiesStore().getTotalSignNum()) {
+    int totalSignNum = chainBaseManager.getDynamicPropertiesStore().getTotalSignNum();
+    if (trx.getSignatureCount() + trx.getPqAuthSigCount() > totalSignNum) {
       resultBuilder.setCode(TransactionApprovedList.Result.response_code.OTHER_ERROR);
       resultBuilder.setMessage("too many signatures");
       tswBuilder.setResult(resultBuilder);
