@@ -512,8 +512,7 @@ public class Wallet {
     Sha256Hash txID = trx.getTransactionId();
     try {
       // Bound signature entry count before per-entry validation.
-      int totalSignCount = signedTransaction.getSignatureCount()
-          + signedTransaction.getPqAuthSigCount();
+      int totalSignCount = trx.getTotalSignatureCount();
       int totalSignNum = chainBaseManager.getDynamicPropertiesStore().getTotalSignNum();
       if (totalSignCount > totalSignNum) {
         String info = "total signature count " + totalSignCount + " exceeds " + totalSignNum;
@@ -526,15 +525,6 @@ public class Wallet {
       for (ByteString sig : signedTransaction.getSignatureList()) {
         if (!SignUtils.isValidLength(sig.size())) {
           String info = "Signature size is " + sig.size();
-          logger.warn("Broadcast transaction {} has failed, {}.", txID, info);
-          return builder.setResult(false).setCode(response_code.SIGERROR)
-              .setMessage(ByteString.copyFromUtf8("Validate signature error: " + info))
-              .build();
-        }
-      }
-      for (PQAuthSig pqAuthSig : signedTransaction.getPqAuthSigList()) {
-        if (!PQAuthSigValidator.isLengthWithinBounds(pqAuthSig)) {
-          String info = "pq_auth_sig size is out of bounds";
           logger.warn("Broadcast transaction {} has failed, {}.", txID, info);
           return builder.setResult(false).setCode(response_code.SIGERROR)
               .setMessage(ByteString.copyFromUtf8("Validate signature error: " + info))
@@ -665,8 +655,10 @@ public class Wallet {
     TransactionApprovedList.Builder tswBuilder = TransactionApprovedList.newBuilder();
     TransactionApprovedList.Result.Builder resultBuilder = TransactionApprovedList.Result
         .newBuilder();
-    int totalSignNum = chainBaseManager.getDynamicPropertiesStore().getTotalSignNum();
-    if (trx.getSignatureCount() + trx.getPqAuthSigCount() > totalSignNum) {
+
+    TransactionCapsule trxCap = new TransactionCapsule(trx);
+    if (trxCap.getTotalSignatureCount()
+        > chainBaseManager.getDynamicPropertiesStore().getTotalSignNum()) {
       resultBuilder.setCode(TransactionApprovedList.Result.response_code.OTHER_ERROR);
       resultBuilder.setMessage("too many signatures");
       tswBuilder.setResult(resultBuilder);
@@ -716,10 +708,6 @@ public class Wallet {
           TransactionCapsule.checkWeight(permission, trx.getSignatureList(), hash, approveList);
         }
         if (trx.getPqAuthSigCount() > 0) {
-          if (!chainBaseManager.getDynamicPropertiesStore().isAnyPqSchemeAllowed()) {
-            throw new PermissionException(
-                "pq_auth_sig not allowed: no post-quantum scheme is activated");
-          }
           TransactionCapsule.validatePQSignatureGetWeight(trx, permission,
               chainBaseManager.getDynamicPropertiesStore(), approveList);
         }

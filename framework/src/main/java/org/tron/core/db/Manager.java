@@ -1232,7 +1232,7 @@ public class Manager {
     Transaction t1 = tx1.getInstance();
     Transaction t2 = tx2.getInstance();
 
-    // Both channels (ECDSA + post-quantum) must match.
+    // Both channels (ECDSA + post-quantum) must match, regardless post-quantum open or not
     if (t1.getSignatureCount() != t2.getSignatureCount()
         || t1.getPqAuthSigCount() != t2.getPqAuthSigCount()) {
       return false;

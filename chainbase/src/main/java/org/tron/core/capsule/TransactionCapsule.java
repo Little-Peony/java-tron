@@ -665,16 +665,13 @@ public class TransactionCapsule implements ProtoCapsule<Transaction> {
       DynamicPropertiesStore dynamicPropertiesStore)
       throws ValidateSignatureException {
     if (!isVerified) {
-      int signatureCount = this.transaction.getSignatureCount();
-      int pqCount = this.transaction.getPqAuthSigCount();
-      if (pqCount > 0) {
-        if (dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
-          signatureCount += pqCount;
-        } else {
-          throw new ValidateSignatureException(
-              "pq_auth_sig not allowed: no post-quantum scheme is activated");
-        }
+
+      if (this.transaction.getPqAuthSigCount() > 0 &&
+          !dynamicPropertiesStore.isAnyPqSchemeAllowed()) {
+        throw new ValidateSignatureException(
+            "pq_auth_sig not allowed: no post-quantum scheme is activated");
       }
+      int signatureCount = getTotalSignatureCount();
 
       if (signatureCount == 0 || this.transaction.getRawData().getContractCount() <= 0) {
         throw new ValidateSignatureException("miss sig or contract");
