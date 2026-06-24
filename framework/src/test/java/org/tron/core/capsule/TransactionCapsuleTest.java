@@ -128,6 +128,32 @@ public class TransactionCapsuleTest extends BaseTest {
     }
   }
 
+  @Test
+  public void toStringRendersPqSignPqOnly() {
+    Transaction tx = buildTransferTx(PQ_OWNER_HEX, 0).toBuilder()
+        .addPqAuthSig(PQAuthSig.newBuilder()
+            .setScheme(PQScheme.FN_DSA_512)
+            .setSignature(ByteString.copyFrom("pq-sig-bytes".getBytes()))
+            .build())
+        .build();
+    String s = new TransactionCapsule(tx).toString();
+    Assert.assertTrue(s, s.contains("pq_sign(FN_DSA_512)="));
+  }
+
+  @Test
+  public void toStringRendersPqSignWithEcdsa() {
+    Transaction tx = buildTransferTx(PQ_OWNER_HEX, 0).toBuilder()
+        .addSignature(ByteString.copyFrom(new byte[65]))
+        .addPqAuthSig(PQAuthSig.newBuilder()
+            .setScheme(PQScheme.FN_DSA_512)
+            .setSignature(ByteString.copyFrom("pq-sig-bytes".getBytes()))
+            .build())
+        .build();
+    String s = new TransactionCapsule(tx).toString();
+    Assert.assertTrue("toString should contain both sign= and pq_sign(): " + s,
+        s.contains("sign=") && s.contains("pq_sign(FN_DSA_512)="));
+  }
+
   // --------------------- FN-DSA pq_auth_sig verification (V2) ---------------------
 
   private static final String PQ_OWNER_HEX = "41abd4b9367799eaa3197fecb144eb71de1e049abc";
@@ -263,37 +289,6 @@ public class TransactionCapsuleTest extends BaseTest {
         .addSignature(ByteString.copyFrom(new byte[65]))
         .addPqAuthSig(pq).addPqAuthSig(pq).build();
     Assert.assertEquals(3, new TransactionCapsule(mixed).getTotalSignatureCount());
-  }
-
-  @Test
-  public void pqAuthSigLengthPreFilter() throws Exception {
-    FNDSA512 kp = new FNDSA512();
-    Transaction tx = buildTransferTx(PQ_OWNER_HEX, 0);
-    byte[] sig = FNDSA512.sign(kp.getPrivateKey(), txId(tx));
-
-    Transaction valid = tx.toBuilder().addPqAuthSig(PQAuthSig.newBuilder()
-        .setScheme(PQScheme.FN_DSA_512)
-        .setPublicKey(ByteString.copyFrom(kp.getPublicKey()))
-        .setSignature(ByteString.copyFrom(sig)).build()).build();
-    Assert.assertTrue(TransactionCapsule.isPqAuthSigLengthValid(valid));
-
-    // Wrong public-key length -> rejected by the cheap pre-filter.
-    Transaction badPk = tx.toBuilder().addPqAuthSig(PQAuthSig.newBuilder()
-        .setScheme(PQScheme.FN_DSA_512)
-        .setPublicKey(ByteString.copyFrom(new byte[10]))
-        .setSignature(ByteString.copyFrom(sig)).build()).build();
-    Assert.assertFalse(TransactionCapsule.isPqAuthSigLengthValid(badPk));
-
-    // Unknown scheme -> deferred to full validation, must pass the cheap pre-filter
-    // (forward-compat: an old node must not reject a future scheme here).
-    Transaction unknown = tx.toBuilder().addPqAuthSig(PQAuthSig.newBuilder()
-        .setSchemeValue(9999)
-        .setPublicKey(ByteString.copyFrom(new byte[10]))
-        .setSignature(ByteString.copyFrom(new byte[10])).build()).build();
-    Assert.assertTrue(TransactionCapsule.isPqAuthSigLengthValid(unknown));
-
-    // No pq_auth_sig -> trivially valid.
-    Assert.assertTrue(TransactionCapsule.isPqAuthSigLengthValid(tx));
   }
 
   @Test

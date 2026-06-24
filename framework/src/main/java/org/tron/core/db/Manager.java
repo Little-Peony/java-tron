@@ -969,8 +969,7 @@ public class Manager {
 
   public void consumeMultiSignFee(TransactionCapsule trx, TransactionTrace trace)
       throws AccountResourceInsufficientException {
-    // Count BOTH signature channels: a PQ-only or PQ-heavy multi-sign transaction
-    // has zero ECDSA signatures.
+    // Count BOTH signature channels
     if (trx.getTotalSignatureCount() > 1) {
       long fee = getDynamicPropertiesStore().getMultiSignFee();
       boolean disableJavaLangMath = getDynamicPropertiesStore().disableJavaLangMath();

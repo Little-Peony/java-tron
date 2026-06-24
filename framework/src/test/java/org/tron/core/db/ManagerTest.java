@@ -935,6 +935,46 @@ public class ManagerTest extends BaseMethodTest {
   }
 
   @Test
+  public void isSameSigComparesBothSignatureChannels() throws Exception {
+    Method isSameSig = Manager.class.getDeclaredMethod("isSameSig",
+        TransactionCapsule.class, TransactionCapsule.class);
+    isSameSig.setAccessible(true);
+
+    TransferContract c = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom("ss".getBytes())).setAmount(3).build();
+    Transaction base = new TransactionCapsule(c, ContractType.TransferContract).getInstance();
+
+    ByteString ecdsa = ByteString.copyFrom("ecdsa-sig".getBytes());
+    PQAuthSig pqA = PQAuthSig.newBuilder().setScheme(PQScheme.FN_DSA_512)
+        .setSignature(ByteString.copyFrom("pq-A".getBytes())).build();
+    PQAuthSig pqB = PQAuthSig.newBuilder().setScheme(PQScheme.FN_DSA_512)
+        .setSignature(ByteString.copyFrom("pq-B".getBytes())).build();
+
+    TransactionCapsule a = new TransactionCapsule(
+        base.toBuilder().addSignature(ecdsa).addPqAuthSig(pqA).build());
+    TransactionCapsule identical = new TransactionCapsule(
+        base.toBuilder().addSignature(ecdsa).addPqAuthSig(pqA).build());
+    TransactionCapsule diffPq = new TransactionCapsule(
+        base.toBuilder().addSignature(ecdsa).addPqAuthSig(pqB).build());
+    TransactionCapsule diffEcdsa = new TransactionCapsule(
+        base.toBuilder().addSignature(ByteString.copyFrom("other".getBytes()))
+            .addPqAuthSig(pqA).build());
+    TransactionCapsule noPq = new TransactionCapsule(base.toBuilder().addSignature(ecdsa).build());
+
+    // Null handling.
+    Assert.assertFalse((Boolean) isSameSig.invoke(dbManager, null, a));
+    Assert.assertFalse((Boolean) isSameSig.invoke(dbManager, a, null));
+    // Identical ECDSA + identical pq_auth_sig -> same (cache reuse is safe).
+    Assert.assertTrue((Boolean) isSameSig.invoke(dbManager, a, identical));
+    // Same ECDSA but a different pq_auth_sig -> NOT same (the fork fix).
+    Assert.assertFalse((Boolean) isSameSig.invoke(dbManager, a, diffPq));
+    // Different ECDSA -> not same.
+    Assert.assertFalse((Boolean) isSameSig.invoke(dbManager, a, diffEcdsa));
+    // Same ECDSA but differing pq_auth_sig count (1 vs 0) -> not same.
+    Assert.assertFalse((Boolean) isSameSig.invoke(dbManager, a, noPq));
+  }
+
+  @Test
   public void getVerifyTxsSkipsBlockWhenPermissionTxAlreadyConsumed() throws Exception {
     // Scenario: a permission-change tx (A) for owner X has been processed and consumed,
     // so it is no longer in pendingTransactions but ownerAddressSet still contains X.
