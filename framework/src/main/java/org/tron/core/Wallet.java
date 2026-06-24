@@ -530,6 +530,16 @@ public class Wallet {
         }
       }
 
+      for (PQAuthSig pqAuthSig : signedTransaction.getPqAuthSigList()) {
+        if (!PQAuthSigValidator.isLengthWithinBounds(pqAuthSig)) {
+          String info = "pq_auth_sig size is out of bounds";
+          logger.warn("Broadcast transaction {} has failed, {}.", txID, info);
+          return builder.setResult(false).setCode(response_code.SIGERROR)
+              .setMessage(ByteString.copyFromUtf8("Validate signature error: " + info))
+              .build();
+        }
+      }
+
       if (tronNetDelegate.isBlockUnsolidified()) {
         logger.warn("Broadcast transaction {} has failed, block unsolidified.", txID);
         return builder.setResult(false).setCode(response_code.BLOCK_UNSOLIDIFIED)

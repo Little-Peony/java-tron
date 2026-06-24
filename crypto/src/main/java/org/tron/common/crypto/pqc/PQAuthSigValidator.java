@@ -17,11 +17,15 @@ public final class PQAuthSigValidator {
       return false;
     }
     PQScheme scheme = pqAuthSig.getScheme();
-    if (!PQSchemeRegistry.contains(scheme)) {
-     return false;
+    int maxPk;
+    int maxSig;
+    if (PQSchemeRegistry.contains(scheme)) {
+      maxPk = PQSchemeRegistry.getPublicKeyLength(scheme);
+      maxSig = PQSchemeRegistry.getSignatureLength(scheme);
+    } else {
+      maxPk = PQSchemeRegistry.getMaxPublicKeyLength();
+      maxSig = PQSchemeRegistry.getMaxSignatureLength();
     }
-    int maxPk = PQSchemeRegistry.getPublicKeyLength(scheme);
-    int maxSig = PQSchemeRegistry.getSignatureLength(scheme);
     return pqAuthSig.getPublicKey().size() <= maxPk
         && pqAuthSig.getSignature().size() <= maxSig;
   }
